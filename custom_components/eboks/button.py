@@ -31,7 +31,7 @@ async def async_setup_entry(
 
     async_add_entities([
         EboksMarkAllReadButton(coordinator, api, entry, cpr),
-        EboksRefreshButton(coordinator, entry, cpr),
+        EboksRefreshButton(coordinator, api, entry, cpr),
     ])
 
 
@@ -129,11 +129,13 @@ class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
     def __init__(
         self,
         coordinator: EboksCoordinator,
+        api: EboksApi,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
+        self._api = api
         self._entry = entry
         self._cpr = cpr
         self._attr_unique_id = f"{entry.entry_id}_refresh"
@@ -153,9 +155,8 @@ class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
         """Handle button press - refresh data."""
         _LOGGER.info("Refreshing e-Boks data - re-authenticating first")
         # Re-authenticate to ensure fresh session
-        api: EboksApi = self.hass.data[DOMAIN][self._entry.entry_id]["api"]
         try:
-            await api.authenticate()
+            await self._api.authenticate()
             _LOGGER.debug("Re-authentication successful")
         except Exception as err:
             _LOGGER.error("Re-authentication failed: %s", err)
