@@ -13,6 +13,12 @@ CONF_CPR: Final = "cpr"
 CONF_PASSWORD: Final = "password"
 CONF_DEVICE_ID: Final = "device_id"
 CONF_ACTIVATION_CODE: Final = "activation_code"
+CONF_AUTH_TYPE: Final = "auth_type"
+CONF_PRIVATE_KEY: Final = "private_key"
+
+# Authentication types
+AUTH_TYPE_ACTIVATION_CODE: Final = "activation_code"
+AUTH_TYPE_MITID: Final = "mitid"
 
 # Options keys
 CONF_SCAN_INTERVAL: Final = "scan_interval"

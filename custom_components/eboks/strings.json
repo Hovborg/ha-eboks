@@ -2,97 +2,133 @@
   "config": {
     "step": {
       "user": {
-        "title": "e-Boks Login",
-        "description": "Enter your e-Boks credentials. Find your activation code in the e-Boks app under Menu → Mobile Access.",
+        "title": "e-Boks - Vælg login metode",
+        "description": "Vælg hvordan du vil logge ind på e-Boks.",
+        "menu_options": {
+          "activation_code": "Aktiveringskode (kun Virksomheder)",
+          "mitid_credentials": "MitID (fuld adgang inkl. Digital Post)"
+        }
+      },
+      "activation_code": {
+        "title": "e-Boks - Aktiveringskode",
+        "description": "Indtast dine e-Boks oplysninger. Find din aktiveringskode i e-Boks appen under Menu → Mobiladgang.\n\n**Bemærk:** Denne metode giver kun adgang til Virksomheder-postkassen.",
         "data": {
-          "cpr": "CPR Number",
-          "password": "Mobile PIN Code",
-          "activation_code": "Activation Code"
+          "cpr": "CPR-nummer",
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
+        },
+        "data_description": {
+          "cpr": "Dit CPR-nummer uden bindestreg",
+          "password": "Din 4-cifrede mobil PIN-kode",
+          "activation_code": "6-cifret aktiveringskode fra e-Boks appen"
+        }
+      },
+      "mitid_credentials": {
+        "title": "e-Boks - MitID Login",
+        "description": "Indtast dit CPR-nummer og din e-Boks mobil PIN-kode.\n\n**MitID giver fuld adgang** til alle postkasser inkl. Digital Post fra det offentlige.",
+        "data": {
+          "cpr": "CPR-nummer",
+          "password": "Mobil PIN-kode"
+        },
+        "data_description": {
+          "cpr": "Dit CPR-nummer uden bindestreg",
+          "password": "Din 4-cifrede mobil PIN-kode"
+        }
+      },
+      "mitid_authorize": {
+        "title": "e-Boks - MitID Godkendelse",
+        "description": "For at fuldføre opsætningen skal du:\n\n1. Åbn linket nedenfor i en browser\n2. Log ind med MitID\n3. Efter login bliver du sendt til en side der starter med `dk.e-boks.app://oauth`\n4. Kopiér **hele URL'en** (inkl. `code=...` delen)\n5. Indsæt URL'en eller kun koden nedenfor\n\n**MitID Link:** {auth_url}",
+        "data": {
+          "authorization_code": "Autoriserings URL eller kode"
+        },
+        "data_description": {
+          "authorization_code": "Indsæt hele URL'en fra redirect eller kun koden efter 'code='"
         }
       },
       "reauth_confirm": {
-        "title": "Re-authenticate e-Boks",
-        "description": "Your e-Boks session has expired. Please enter your credentials again.",
+        "title": "e-Boks - Genautentificer",
+        "description": "Din e-Boks session er udløbet. Indtast dine oplysninger igen.",
         "data": {
-          "password": "Mobile PIN Code",
-          "activation_code": "Activation Code"
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
         }
       },
       "reconfigure": {
-        "title": "Reconfigure e-Boks",
-        "description": "Update your e-Boks credentials.",
+        "title": "e-Boks - Genkonfigurer",
+        "description": "Opdater dine e-Boks oplysninger.",
         "data": {
-          "cpr": "CPR Number",
-          "password": "Mobile PIN Code",
-          "activation_code": "Activation Code"
+          "cpr": "CPR-nummer",
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to e-Boks",
-      "invalid_auth": "Invalid credentials",
-      "unknown": "Unknown error occurred"
+      "cannot_connect": "Kunne ikke forbinde til e-Boks",
+      "invalid_auth": "Ugyldige oplysninger",
+      "unknown": "Ukendt fejl opstod",
+      "mitid_auth_failed": "MitID autentificering fejlede. Prøv igen."
     },
     "abort": {
-      "already_configured": "This e-Boks account is already configured",
-      "reauth_successful": "Re-authentication successful",
-      "reconfigure_successful": "Reconfiguration successful"
+      "already_configured": "Denne e-Boks konto er allerede konfigureret",
+      "reauth_successful": "Genautentificering lykkedes",
+      "reconfigure_successful": "Genkonfigurering lykkedes"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "e-Boks Options",
-        "description": "Configure e-Boks integration settings.\n\nScan interval: {min_scan}-{max_scan} minutes\nMessage count: {min_msg}-{max_msg} messages",
+        "title": "e-Boks Indstillinger",
+        "description": "Konfigurer e-Boks integration.\n\nLogin type: **{auth_type}**\n\nScan interval: {min_scan}-{max_scan} minutter\nAntal beskeder: {min_msg}-{max_msg} beskeder",
         "data": {
-          "scan_interval": "Scan Interval (minutes)",
-          "message_count": "Number of Message Sensors",
-          "notify_senders": "Important Senders (comma-separated)"
+          "scan_interval": "Scan interval (minutter)",
+          "message_count": "Antal besked-sensorer",
+          "notify_senders": "Vigtige afsendere (kommasepareret)"
         },
         "data_description": {
-          "scan_interval": "How often to check for new messages",
-          "message_count": "Number of individual message sensors to create (Besked 1, Besked 2, etc.)",
-          "notify_senders": "Comma-separated list of sender names that trigger persistent notifications. Default: Skattestyrelsen, Kommune, Sundhed, NemKonto, Udbetaling Danmark"
+          "scan_interval": "Hvor ofte der tjekkes for nye beskeder",
+          "message_count": "Antal individuelle besked-sensorer (Besked 1, Besked 2, osv.)",
+          "notify_senders": "Kommasepareret liste over afsendere der giver notifikationer. Standard: Skattestyrelsen, Kommune, Sundhed, NemKonto, Udbetaling Danmark"
         }
       }
     }
   },
   "services": {
     "download_message": {
-      "name": "Download Message",
-      "description": "Download an e-Boks message to the specified path.",
+      "name": "Download Besked",
+      "description": "Download en e-Boks besked til den angivne sti.",
       "fields": {
         "message_id": {
-          "name": "Message ID",
-          "description": "The ID of the message to download"
+          "name": "Besked ID",
+          "description": "ID'et på beskeden der skal downloades"
         },
         "folder_id": {
-          "name": "Folder ID",
-          "description": "The ID of the folder containing the message"
+          "name": "Mappe ID",
+          "description": "ID'et på mappen der indeholder beskeden"
         },
         "path": {
-          "name": "Path",
-          "description": "The path where the file will be saved"
+          "name": "Sti",
+          "description": "Stien hvor filen skal gemmes"
         }
       }
     },
     "mark_as_read": {
-      "name": "Mark as Read",
-      "description": "Mark an e-Boks message as read.",
+      "name": "Markér som Læst",
+      "description": "Markér en e-Boks besked som læst.",
       "fields": {
         "message_id": {
-          "name": "Message ID",
-          "description": "The ID of the message to mark as read"
+          "name": "Besked ID",
+          "description": "ID'et på beskeden der skal markeres som læst"
         },
         "folder_id": {
-          "name": "Folder ID",
-          "description": "The ID of the folder containing the message"
+          "name": "Mappe ID",
+          "description": "ID'et på mappen der indeholder beskeden"
         }
       }
     },
     "refresh": {
-      "name": "Refresh",
-      "description": "Force refresh e-Boks data."
+      "name": "Opdater",
+      "description": "Tving opdatering af e-Boks data."
     }
   }
 }

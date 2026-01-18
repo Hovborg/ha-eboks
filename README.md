@@ -7,9 +7,13 @@ Home Assistant integration for the Danish e-Boks digital mailbox. Automatically 
 
 ## Features
 
-- **No MitID required** - Uses the mobile API with activation code
+- **Two login methods:**
+  - **Activation code** - Quick setup, access to business mailbox (Virksomheder)
+  - **MitID** - Full access including Digital Post from public authorities
 - **Unread message count** - Track how many unread messages you have
 - **Latest message details** - See sender, subject, and received date
+- **Individual message sensors** - Up to 20 configurable message sensors
+- **Folder sensors** - Monitor specific folders
 - **Download PDF** - Download messages as PDF to view in browser
 - **Events** - Fire events when new messages arrive for automations
 - **Mark as read** - Mark messages as read via service call
@@ -17,13 +21,29 @@ Home Assistant integration for the Danish e-Boks digital mailbox. Automatically 
 - **Multiple accounts** - Support for multiple e-Boks accounts
 - **Danish & English** - Full translation support
 
+## Authentication Methods
+
+### Activation Code (Quick Setup)
+- **Access:** Business mailbox (Virksomheder) only
+- **Requires:** CPR, Mobile PIN, Activation code from e-Boks app
+- **Best for:** Users who only need business correspondence
+
+### MitID (Full Access) - NEW in v0.9.0
+- **Access:** All mailboxes including Digital Post from public authorities
+- **Requires:** CPR, Mobile PIN, one-time MitID login
+- **Best for:** Users who want access to government correspondence (Skattestyrelsen, Kommune, Sundhed, etc.)
+- **How it works:** After initial MitID authentication, an RSA key is registered with e-Boks. Future logins use this key automatically - no repeated MitID logins needed.
+
 ## Entities Created
 
 | Entity | Type | Description |
 |--------|------|-------------|
 | `sensor.eboks_ulaeste_beskeder` | Sensor | Number of unread messages |
 | `sensor.eboks_seneste_besked` | Sensor | Subject of latest message |
+| `sensor.eboks_besked_1` to `_5` | Sensor | Individual message sensors (configurable) |
+| `sensor.eboks_mappe_*` | Sensor | Folder sensors with message counts |
 | `binary_sensor.eboks_ulaest_post` | Binary Sensor | ON when unread messages exist |
+| `button.eboks_opdater` | Button | Manual refresh button |
 
 ### Sensor Attributes
 
@@ -87,7 +107,7 @@ automation:
     action:
       - service: notify.mobile_app
         data:
-          title: "📬 Ny e-Boks besked"
+          title: "Ny e-Boks besked"
           message: "Fra: {{ trigger.event.data.sender }} - {{ trigger.event.data.subject }}"
           data:
             actions:
@@ -122,24 +142,55 @@ Event data includes: `previous_count`, `current_count`, `difference`
 
 ## Configuration
 
-### Prerequisites
+### Option 1: Activation Code (Business Mailbox Only)
 
-Before setting up the integration, you need to get your **activation code** from the e-Boks app:
-
+**Prerequisites:**
 1. Open the e-Boks app on your phone
 2. Go to **Menu** → **Mobiladgang** (Mobile Access)
 3. Note your **activation code** (or create a new one)
 4. Remember your **mobile PIN code**
 
-### Setup
-
+**Setup:**
 1. Go to **Settings** → **Devices & Services**
 2. Click **+ Add Integration**
 3. Search for "e-Boks"
-4. Enter your credentials:
+4. Select **"Aktiveringskode (kun Virksomheder)"**
+5. Enter your credentials:
    - **CPR Number** - Your Danish CPR number (with or without dash)
    - **Mobile PIN Code** - Your e-Boks mobile PIN
    - **Activation Code** - From the e-Boks app
+
+### Option 2: MitID (Full Access including Digital Post)
+
+**Prerequisites:**
+- Your e-Boks mobile PIN code
+- Access to MitID (app or code device)
+
+**Setup:**
+1. Go to **Settings** → **Devices & Services**
+2. Click **+ Add Integration**
+3. Search for "e-Boks"
+4. Select **"MitID (fuld adgang inkl. Digital Post)"**
+5. Enter your CPR and mobile PIN
+6. You'll see a MitID authorization link - open it in a browser
+7. Log in with MitID
+8. After login, you'll be redirected to a URL starting with `dk.e-boks.app://oauth?code=...`
+9. Copy the **entire URL** (or just the code after `code=`)
+10. Paste it in the authorization field
+
+**Note:** After initial MitID setup, the integration stores an RSA key. You won't need to use MitID again unless you delete and re-add the integration.
+
+## Options
+
+After setup, you can configure these options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| Scan interval | 30 min | How often to check for new messages (5-1440 min) |
+| Message count | 5 | Number of individual message sensors (1-20) |
+| Important senders | See below | Senders that trigger persistent notifications |
+
+**Default important senders:** Skattestyrelsen, Kommune, Sundhed, NemKonto, Udbetaling Danmark
 
 ## Example Automations
 
@@ -156,7 +207,7 @@ automation:
     action:
       - service: notify.mobile_app
         data:
-          title: "📬 Ny e-Boks besked"
+          title: "Ny e-Boks besked"
           message: >
             Fra: {{ state_attr('sensor.eboks_seneste_besked', 'sender') }}
             Emne: {{ states('sensor.eboks_seneste_besked') }}
@@ -174,7 +225,7 @@ automation:
     action:
       - service: browser_mod.popup
         data:
-          title: "📬 Ny e-Boks besked"
+          title: "Ny e-Boks besked"
           content:
             type: markdown
             content: |
@@ -201,7 +252,7 @@ entities:
 
 - Verify your CPR number is correct (format: DDMMYYXXXX or DDMMYY-XXXX)
 - Check your mobile PIN code is correct
-- Ensure your activation code is still valid in the e-Boks app
+- For activation code: Ensure your activation code is still valid in the e-Boks app
 - Try creating a new activation code in the app
 
 ### "Cannot connect" error
@@ -210,15 +261,51 @@ entities:
 - e-Boks servers may be temporarily unavailable
 - Try again in a few minutes
 
+### "MitID authentication failed" error
+
+- Make sure you copied the entire redirect URL
+- The authorization code is single-use - if it fails, start over
+- Check that your mobile PIN is correct
+
 ### Messages not updating
 
-The integration polls e-Boks every 30 minutes by default. You can manually refresh by:
-1. Going to Settings → Devices & Services → e-Boks
-2. Click the three dots → Reload
+The integration polls e-Boks every 30 minutes by default. You can:
+1. Use the refresh button entity
+2. Call the `eboks.refresh` service
+3. Go to Settings → Devices & Services → e-Boks → Reload
+
+### Only seeing business mailbox (Virksomheder)
+
+This is expected with activation code authentication. To access Digital Post from public authorities:
+1. Delete the current e-Boks integration
+2. Re-add it using the MitID option
+
+## Changelog
+
+### v0.9.0
+- **NEW:** MitID authentication for full mailbox access
+- **NEW:** Access to Digital Post from public authorities
+- **NEW:** RSA key-based authentication (no repeated MitID logins)
+- **NEW:** Individual message sensors (configurable 1-20)
+- **NEW:** Folder sensors
+- **NEW:** Refresh button entity
+- **NEW:** Danish translations
+- Added cryptography dependency for RSA operations
+- Improved error handling and logging
+
+### v0.8.0
+- Added shares endpoint discovery
+- Improved API error handling
+
+### v0.7.x
+- Initial release with activation code support
+- Basic message monitoring
+- Download and mark-as-read services
 
 ## Credits
 
 - API research based on [Net-Eboks](https://github.com/dk/Net-Eboks) by Dmitry Karasik
+- MitID OAuth flow inspired by Net-Eboks RSA implementation
 - API structure from [minboks](https://github.com/larspehrsson/minboks) by Lars Pehrsson
 
 ## License

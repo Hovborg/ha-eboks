@@ -12,11 +12,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import EboksApi
 from .const import (
+    AUTH_TYPE_ACTIVATION_CODE,
+    AUTH_TYPE_MITID,
     CONF_ACTIVATION_CODE,
+    CONF_AUTH_TYPE,
     CONF_CPR,
     CONF_DEVICE_ID,
     CONF_MESSAGE_COUNT,
     CONF_NOTIFY_SENDERS,
+    CONF_PRIVATE_KEY,
     CONF_SCAN_INTERVAL,
     DEFAULT_MESSAGE_COUNT,
     DEFAULT_NOTIFY_SENDERS,
@@ -31,6 +35,25 @@ __all__ = ["EVENT_NEW_MESSAGE", "EVENT_UNREAD_CHANGED"]
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old entry."""
+    _LOGGER.info("Migrating e-Boks config entry from version %s", config_entry.version)
+
+    if config_entry.version == 1:
+        # Version 1 -> 2: Add auth_type field
+        new_data = {**config_entry.data}
+        if CONF_AUTH_TYPE not in new_data:
+            new_data[CONF_AUTH_TYPE] = AUTH_TYPE_ACTIVATION_CODE
+            _LOGGER.info("Added auth_type=%s to config entry", AUTH_TYPE_ACTIVATION_CODE)
+
+        hass.config_entries.async_update_entry(
+            config_entry, data=new_data, version=2
+        )
+        _LOGGER.info("Migration to version 2 successful")
+
+    return True
 
 
 def get_options(entry: ConfigEntry) -> dict[str, Any]:
@@ -53,13 +76,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up e-Boks from a config entry."""
     session = async_get_clientsession(hass)
 
-    api = EboksApi(
-        cpr=entry.data[CONF_CPR],
-        password=entry.data[CONF_PASSWORD],
-        device_id=entry.data.get(CONF_DEVICE_ID),
-        activation_code=entry.data[CONF_ACTIVATION_CODE],
-        session=session,
-    )
+    # Determine auth type and create API client
+    auth_type = entry.data.get(CONF_AUTH_TYPE, AUTH_TYPE_ACTIVATION_CODE)
+
+    if auth_type == AUTH_TYPE_MITID:
+        # MitID RSA authentication
+        api = EboksApi(
+            cpr=entry.data[CONF_CPR],
+            password=entry.data[CONF_PASSWORD],
+            device_id=entry.data.get(CONF_DEVICE_ID),
+            private_key_pem=entry.data.get(CONF_PRIVATE_KEY),
+            session=session,
+        )
+        _LOGGER.info("Using MitID RSA authentication for e-Boks")
+    else:
+        # Activation code authentication (default)
+        api = EboksApi(
+            cpr=entry.data[CONF_CPR],
+            password=entry.data[CONF_PASSWORD],
+            device_id=entry.data.get(CONF_DEVICE_ID),
+            activation_code=entry.data.get(CONF_ACTIVATION_CODE),
+            session=session,
+        )
+        _LOGGER.info("Using activation code authentication for e-Boks")
 
     # Get options
     options = get_options(entry)

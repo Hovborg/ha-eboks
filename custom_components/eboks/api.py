@@ -1,7 +1,7 @@
 """e-Boks API client."""
 from __future__ import annotations
 
-import asyncio
+import base64
 import hashlib
 import logging
 import re
@@ -19,6 +19,10 @@ _LOGGER = logging.getLogger(__name__)
 # XML Namespace
 NS = {"eb": "urn:eboks:mobile:1.0.0"}
 
+# Auth types
+AUTH_TYPE_ACTIVATION_CODE = "activation_code"
+AUTH_TYPE_RSA = "rsa"
+
 
 class EboksApiError(Exception):
     """Exception for e-Boks API errors."""
@@ -34,7 +38,12 @@ class EboksAuthError(EboksApiError):
 
 
 class EboksApi:
-    """e-Boks API client."""
+    """e-Boks API client.
+
+    Supports two authentication methods:
+    1. Activation code + PIN (limited to mailbox 0 / Virksomheder)
+    2. RSA key (after MitID registration, full access including Digital Post)
+    """
 
     def __init__(
         self,
@@ -42,18 +51,37 @@ class EboksApi:
         password: str,
         device_id: str | None = None,
         activation_code: str | None = None,
+        private_key_pem: str | None = None,
         session: aiohttp.ClientSession | None = None,
     ) -> None:
-        """Initialize the API client."""
+        """Initialize the API client.
+
+        Args:
+            cpr: CPR number (with or without dash)
+            password: e-Boks mobile password / PIN code
+            device_id: Device ID (generated if not provided)
+            activation_code: Activation code (for simple auth)
+            private_key_pem: RSA private key in PEM format (for MitID auth)
+            session: Optional aiohttp session to reuse
+        """
         self._cpr = cpr.replace("-", "")
         self._password = password
         self._device_id = device_id or str(uuid.uuid4()).upper()
         self._activation_code = activation_code
+        self._private_key_pem = private_key_pem
         self._session = session
         self._session_id: str | None = None
         self._nonce: str | None = None
         self._user_id: str | None = None
         self._owns_session = session is None
+
+        # Determine auth type
+        if private_key_pem:
+            self._auth_type = AUTH_TYPE_RSA
+        elif activation_code:
+            self._auth_type = AUTH_TYPE_ACTIVATION_CODE
+        else:
+            raise EboksAuthError("Either activation_code or private_key_pem must be provided")
 
     @property
     def device_id(self) -> str:
@@ -65,18 +93,86 @@ class EboksApi:
         """Return the activation code."""
         return self._activation_code
 
+    @property
+    def auth_type(self) -> str:
+        """Return the authentication type."""
+        return self._auth_type
+
     def _compute_challenge(self, datetime_str: str) -> str:
-        """Compute the authentication challenge hash."""
+        """Compute the authentication challenge."""
+        if self._auth_type == AUTH_TYPE_RSA:
+            return self._compute_challenge_rsa(datetime_str)
+        else:
+            return self._compute_challenge_activation_code(datetime_str)
+
+    def _compute_challenge_activation_code(self, datetime_str: str) -> str:
+        """Compute the authentication challenge hash for activation code auth."""
         # Format: SHA256(SHA256("{activationCode}:{deviceId}:P:{userId}:DK:{password}:{datetime}"))
         raw = f"{self._activation_code}:{self._device_id}:P:{self._cpr}:DK:{self._password}:{datetime_str}"
         first_hash = hashlib.sha256(raw.encode()).hexdigest()
         second_hash = hashlib.sha256(first_hash.encode()).hexdigest()
         return second_hash
 
+    def _compute_challenge_rsa(self, datetime_str: str) -> str:
+        """Compute the authentication challenge using RSA signing."""
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+        except ImportError:
+            raise EboksAuthError("cryptography library required for RSA authentication")
+
+        # Challenge format: EBOKS:deviceid:type:cpr:country:password:datetime
+        challenge_str = f"EBOKS:{self._device_id}:P:{self._cpr}:DK:{self._password}:{datetime_str}"
+
+        # Load private key and sign
+        private_key = serialization.load_pem_private_key(
+            self._private_key_pem.encode('utf-8'),
+            password=None,
+        )
+
+        signature = private_key.sign(
+            challenge_str.encode('utf-8'),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+
+        return base64.b64encode(signature).decode('utf-8')
+
     def _compute_response(self, challenge: str) -> str:
         """Compute session response hash."""
+        if self._auth_type == AUTH_TYPE_RSA:
+            return self._compute_response_rsa(challenge)
+        else:
+            return self._compute_response_activation_code(challenge)
+
+    def _compute_response_activation_code(self, challenge: str) -> str:
+        """Compute session response hash for activation code auth."""
         raw = f"{self._activation_code}:{self._device_id}:{challenge}"
         return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _compute_response_rsa(self, challenge: str) -> str:
+        """Compute session response using RSA signing."""
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+        except ImportError:
+            raise EboksAuthError("cryptography library required for RSA authentication")
+
+        # For RSA auth, response is signature of: deviceId:challenge
+        response_str = f"{self._device_id}:{challenge}"
+
+        private_key = serialization.load_pem_private_key(
+            self._private_key_pem.encode('utf-8'),
+            password=None,
+        )
+
+        signature = private_key.sign(
+            response_str.encode('utf-8'),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+
+        return base64.b64encode(signature).decode('utf-8')
 
     def _get_headers(self, auth_header: str | None = None) -> dict[str, str]:
         """Get common headers for API requests."""
@@ -149,7 +245,7 @@ class EboksApi:
 
                     # Parse user info from XML body
                     text = await response.text()
-                    _LOGGER.debug("Session response: %s", text)
+                    _LOGGER.warning("SESSION XML: %s", text[:2000])
                     root = ET.fromstring(text)
 
                     # Try with namespace first, then without
@@ -161,10 +257,15 @@ class EboksApi:
 
                     if user_elem is not None:
                         self._user_id = user_elem.get("userId")
-                        _LOGGER.debug("User ID: %s", self._user_id)
+                        _LOGGER.info("User ID: %s, All user attributes: %s", self._user_id, user_elem.attrib)
 
-                    # Log the full session response for debugging
-                    _LOGGER.info("Full session XML response: %s", text[:500])
+                    # Log all mailbox elements
+                    for mailbox in root.findall(".//eb:Mailbox", NS):
+                        _LOGGER.info("Found Mailbox: %s", mailbox.attrib)
+                    for mailbox in root.findall(".//Mailbox"):
+                        _LOGGER.info("Found Mailbox (no ns): %s", mailbox.attrib)
+
+                    # Session response parsed successfully
 
                     if self._session_id and self._nonce and self._user_id:
                         _LOGGER.debug("Successfully authenticated with e-Boks (session=%s)", self._session_id[:8])
@@ -205,8 +306,8 @@ class EboksApi:
         _LOGGER.debug("No nonce in response (status=%s)", response.status)
         return False
 
-    async def get_folders(self, mailbox_id: int = 0) -> list[dict[str, Any]]:
-        """Get list of mail folders from a specific mailbox."""
+    async def get_shares(self) -> list[dict[str, Any]]:
+        """Get list of available shares (mailboxes) for the user."""
         if not self._user_id:
             await self.authenticate()
 
@@ -214,68 +315,133 @@ class EboksApi:
         auth_header = self._get_session_header()
 
         try:
-            _LOGGER.debug("Fetching folders from mailbox %d", mailbox_id)
+            _LOGGER.debug("Fetching shares list")
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folders",
+                f"{API_BASE_URL}/{self._user_id}/0/shares?listType=active",
                 headers=self._get_headers(auth_header),
             ) as response:
-                # Always try to update nonce from response
-                nonce_updated = self._update_nonce_from_response(response)
+                self._update_nonce_from_response(response)
 
                 if response.status == 200:
                     text = await response.text()
-                    _LOGGER.info("Raw folders XML from mailbox %d: %s", mailbox_id, text[:500])
-                    folders = self._parse_folders(text, mailbox_id)
-                    _LOGGER.debug("Got %d folders from mailbox %d", len(folders), mailbox_id)
+                    _LOGGER.warning("SHARES XML: %s", text[:1000])
+                    return self._parse_shares(text)
+                elif response.status == 401:
+                    await self.authenticate()
+                    return await self.get_shares()
+                else:
+                    error_body = await response.text()
+                    _LOGGER.warning("Failed to get shares: status %d, body: %s", response.status, error_body[:500])
+                    return []
+        except aiohttp.ClientError as err:
+            _LOGGER.warning("Connection error getting shares: %s", err)
+            return []
+
+    def _parse_shares(self, xml_text: str) -> list[dict[str, Any]]:
+        """Parse shares XML response."""
+        shares = []
+        try:
+            root = ET.fromstring(xml_text)
+            # Try with namespace
+            for share in root.findall(".//eb:ShareInfo", NS):
+                shares.append({
+                    "id": share.get("id"),
+                    "name": share.get("name"),
+                    "type": share.get("type"),
+                })
+            # Try without namespace
+            if not shares:
+                for share in root.findall(".//ShareInfo"):
+                    shares.append({
+                        "id": share.get("id"),
+                        "name": share.get("name"),
+                        "type": share.get("type"),
+                    })
+            _LOGGER.warning("Parsed %d shares: %s", len(shares), shares)
+        except ET.ParseError as err:
+            _LOGGER.error("Failed to parse shares XML: %s", err)
+        return shares
+
+    async def get_folders(self, share_id: str = "0") -> list[dict[str, Any]]:
+        """Get list of mail folders from a specific share (mailbox)."""
+        if not self._user_id:
+            await self.authenticate()
+
+        session = await self._ensure_session()
+        auth_header = self._get_session_header()
+
+        try:
+            _LOGGER.debug("Fetching folders from share %s", share_id)
+            async with session.get(
+                f"{API_BASE_URL}/{self._user_id}/{share_id}/mail/folders",
+                headers=self._get_headers(auth_header),
+            ) as response:
+                # Always try to update nonce from response
+                self._update_nonce_from_response(response)
+
+                if response.status == 200:
+                    text = await response.text()
+                    _LOGGER.debug("Raw folders XML from share %s: %s", share_id, text[:500])
+                    folders = self._parse_folders(text, share_id)
+                    _LOGGER.debug("Got %d folders from share %s", len(folders), share_id)
                     return folders
                 elif response.status == 401:
                     # Session expired, re-authenticate
                     _LOGGER.debug("Session expired, re-authenticating")
                     await self.authenticate()
-                    return await self.get_folders(mailbox_id)
+                    return await self.get_folders(share_id)
                 elif response.status == 404:
-                    # Mailbox doesn't exist for this user, return empty
-                    _LOGGER.warning("Mailbox %d returned 404 - not found for user", mailbox_id)
+                    # Share doesn't exist for this user, return empty
+                    _LOGGER.warning("Share %s returned 404 - not found for user", share_id)
                     return []
                 else:
-                    _LOGGER.warning("Failed to get folders from mailbox %d: status %d", mailbox_id, response.status)
-                    raise EboksApiError(f"Failed to get folders from mailbox {mailbox_id}", response.status)
+                    error_body = await response.text()
+                    _LOGGER.warning("Failed to get folders from share %s: status %d, body: %s", share_id, response.status, error_body[:500])
+                    raise EboksApiError(f"Failed to get folders from share {share_id}", response.status)
         except aiohttp.ClientError as err:
             raise EboksApiError(f"Connection error: {err}") from err
 
     async def get_all_folders(self) -> list[dict[str, Any]]:
-        """Get folders from all mailboxes (virksomheder + det offentlige)."""
+        """Get folders from all available shares (mailboxes).
+
+        First fetches the list of available shares, then gets folders from each.
+        """
         all_folders = []
 
-        # Mailbox 0: Virksomheder (businesses)
-        try:
-            _LOGGER.info("Fetching mailbox 0 (Virksomheder)...")
-            folders_0 = await self.get_folders(0)
-            _LOGGER.info("Got %d folders from mailbox 0", len(folders_0))
-            for f in folders_0:
-                f["mailbox_name"] = "Virksomheder"
-            all_folders.extend(folders_0)
-        except EboksApiError as err:
-            _LOGGER.warning("Failed to get folders from mailbox 0: %s", err)
+        # First, get available shares
+        shares = await self.get_shares()
+        _LOGGER.warning("Available shares: %s", shares)
 
-        # Mailbox 1: Det offentlige (government)
-        try:
-            _LOGGER.info("Fetching mailbox 1 (Det offentlige)...")
-            folders_1 = await self.get_folders(1)
-            _LOGGER.info("Got %d folders from mailbox 1: %s", len(folders_1), [f.get("name") for f in folders_1])
-            for f in folders_1:
-                f["mailbox_name"] = "Det offentlige"
-            all_folders.extend(folders_1)
-            # Store the result for debugging
-            self._mailbox1_result = f"Got {len(folders_1)} folders"
-        except EboksApiError as err:
-            _LOGGER.warning("Failed to get folders from mailbox 1: %s", err)
-            self._mailbox1_result = f"Error: {err}"
+        # Always include share 0 (default mailbox)
+        share_ids = ["0"]
+        for share in shares:
+            share_id = share.get("id")
+            if share_id and share_id not in share_ids:
+                share_ids.append(share_id)
 
-        _LOGGER.info("Total folders from all mailboxes: %d", len(all_folders))
+        _LOGGER.warning("Will fetch folders from share IDs: %s", share_ids)
+
+        # Fetch folders from each share
+        for share_id in share_ids:
+            try:
+                folders = await self.get_folders(share_id)
+                if folders:
+                    # Find share name
+                    share_name = next((s.get("name") for s in shares if s.get("id") == share_id), f"Share {share_id}")
+                    if share_id == "0":
+                        share_name = "Virksomheder"
+                    for f in folders:
+                        f["mailbox_name"] = share_name
+                        f["share_id"] = share_id
+                    all_folders.extend(folders)
+                    _LOGGER.warning("Got %d folders from share %s (%s)", len(folders), share_id, share_name)
+            except EboksApiError as err:
+                _LOGGER.warning("Failed to get folders from share %s: %s", share_id, err)
+
+        _LOGGER.warning("Total folders found: %d", len(all_folders))
         return all_folders
 
-    def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
+    def _parse_folders(self, xml_text: str, share_id: str = "0") -> list[dict[str, Any]]:
         """Parse folders XML response."""
         folders = []
         try:
@@ -285,16 +451,22 @@ class EboksApi:
                     "id": folder.get("id"),
                     "name": folder.get("name"),
                     "unread": int(folder.get("unread", 0)),
-                    "mailbox_id": mailbox_id,
+                    "share_id": share_id,
+                    "mailbox_id": share_id,  # Keep for backwards compatibility
                 })
         except ET.ParseError as err:
             _LOGGER.error("Failed to parse folders XML: %s", err)
         return folders
 
     async def get_messages(
-        self, folder_id: str = "0", mailbox_id: int = 0, skip: int = 0, take: int = 100
+        self, folder_id: str = "0", share_id: str = "0", skip: int = 0, take: int = 100,
+        mailbox_id: int | str | None = None  # Deprecated, for backwards compatibility
     ) -> list[dict[str, Any]]:
         """Get messages from a folder."""
+        # Handle backwards compatibility
+        if mailbox_id is not None:
+            share_id = str(mailbox_id)
+
         if not self._user_id:
             await self.authenticate()
 
@@ -302,9 +474,9 @@ class EboksApi:
         auth_header = self._get_session_header()
 
         try:
-            _LOGGER.debug("Fetching messages from folder %s (mailbox %d)", folder_id, mailbox_id)
+            _LOGGER.debug("Fetching messages from folder %s (share %s)", folder_id, share_id)
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folder/{folder_id}?skip={skip}&take={take}",
+                f"{API_BASE_URL}/{self._user_id}/{share_id}/mail/folder/{folder_id}?skip={skip}&take={take}",
                 headers=self._get_headers(auth_header),
             ) as response:
                 # Always try to update nonce from response
@@ -318,7 +490,7 @@ class EboksApi:
                 elif response.status == 401:
                     _LOGGER.debug("Session expired while getting messages, re-authenticating")
                     await self.authenticate()
-                    return await self.get_messages(folder_id, mailbox_id, skip, take)
+                    return await self.get_messages(folder_id, share_id, skip, take)
                 elif response.status == 404:
                     # Folder doesn't exist, return empty
                     _LOGGER.debug("Folder %s not found", folder_id)
@@ -355,9 +527,14 @@ class EboksApi:
         return messages
 
     async def get_message_content(
-        self, folder_id: str, message_id: str, mailbox_id: int = 0
+        self, folder_id: str, message_id: str, share_id: str = "0",
+        mailbox_id: int | str | None = None  # Deprecated, for backwards compatibility
     ) -> bytes | None:
         """Download message content."""
+        # Handle backwards compatibility
+        if mailbox_id is not None:
+            share_id = str(mailbox_id)
+
         if not self._user_id:
             await self.authenticate()
 
@@ -366,7 +543,7 @@ class EboksApi:
 
         try:
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folder/{folder_id}/message/{message_id}/content",
+                f"{API_BASE_URL}/{self._user_id}/{share_id}/mail/folder/{folder_id}/message/{message_id}/content",
                 headers=self._get_headers(auth_header),
             ) as response:
                 # Always try to update nonce from response
@@ -376,7 +553,7 @@ class EboksApi:
                     return await response.read()
                 elif response.status == 401:
                     await self.authenticate()
-                    return await self.get_message_content(folder_id, message_id, mailbox_id)
+                    return await self.get_message_content(folder_id, message_id, share_id)
                 else:
                     raise EboksApiError(f"Failed to get message content", response.status)
         except aiohttp.ClientError as err:
