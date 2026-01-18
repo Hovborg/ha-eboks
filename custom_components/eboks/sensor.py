@@ -37,6 +37,10 @@ async def async_setup_entry(
         EboksLatestMessageSensor(coordinator, entry, cpr),
     ]
 
+    # Add 5 individual message sensors
+    for i in range(1, 6):
+        entities.append(EboksMessageSensor(coordinator, entry, cpr, i))
+
     async_add_entities(entities)
 
 
@@ -164,4 +168,69 @@ class EboksLatestMessageSensor(EboksBaseSensor):
                 }
                 for m in messages
             ],
+        }
+
+
+class EboksMessageSensor(EboksBaseSensor):
+    """Sensor for individual e-Boks message (1-5)."""
+
+    _attr_icon = "mdi:email-outline"
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        entry: ConfigEntry,
+        cpr: str,
+        position: int,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, cpr)
+        self._position = position
+        self._attr_unique_id = f"{entry.entry_id}_message_{position}"
+        self._attr_name = f"Besked {position}"
+
+    def _get_message(self) -> dict | None:
+        """Get the message at this position."""
+        if not self.coordinator.data:
+            return None
+        messages = self.coordinator.data.get("messages", [])
+        if len(messages) >= self._position:
+            return messages[self._position - 1]
+        return None
+
+    @property
+    def native_value(self) -> str:
+        """Return the subject of this message."""
+        msg = self._get_message()
+        if msg:
+            return msg.get("subject", "Ingen emne")
+        return "Ingen besked"
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on read status."""
+        msg = self._get_message()
+        if msg and msg.get("unread"):
+            return "mdi:email-mark-as-unread"
+        return "mdi:email-open-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional attributes."""
+        msg = self._get_message()
+        if not msg:
+            return {"position": self._position}
+
+        return {
+            "position": self._position,
+            "message_id": msg.get("id"),
+            "folder_id": msg.get("folder_id"),
+            "sender": msg.get("sender"),
+            "subject": msg.get("subject"),
+            "received": msg.get("received"),
+            "folder": msg.get("folder_name"),
+            "unread": msg.get("unread"),
+            "format": msg.get("format"),
+            "attachments": msg.get("attachments_count", 0),
+            "size_bytes": msg.get("size", 0),
         }

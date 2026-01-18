@@ -283,6 +283,8 @@ class EboksApi:
                     "unread": msg.get("unread", "false").lower() == "true",
                     "format": msg.get("format"),
                     "folder_id": msg.get("folderId"),
+                    "attachments_count": int(msg.get("attachmentsCount", 0)),
+                    "size": int(msg.get("size", 0)),
                 })
         except ET.ParseError as err:
             _LOGGER.error("Failed to parse messages XML: %s", err)
