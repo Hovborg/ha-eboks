@@ -118,7 +118,7 @@ class EboksMessageCountSensor(EboksBaseSensor):
 
         return {
             "folders": [
-                {"name": f["name"], "unread": f["unread"]}
+                {"name": f["name"], "unread": f["unread"], "mailbox": f.get("mailbox_name", "unknown")}
                 for f in folders
             ],
             "total_messages": len(messages),
