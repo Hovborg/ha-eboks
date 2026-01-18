@@ -72,6 +72,15 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             folders = await self.api.get_all_folders()
             _LOGGER.debug("Got %d folders", len(folders))
 
+            # Debug notification to show mailbox info
+            folder_info = [f"{f.get('name')} ({f.get('mailbox_name', 'unknown')}): {f.get('unread', 0)} unread" for f in folders]
+            async_create(
+                self.hass,
+                f"**Folders ({len(folders)}):**\\n" + "\\n".join(folder_info[:10]),
+                title="e-Boks Debug: Mailbox Info",
+                notification_id="eboks_debug_mailboxes",
+            )
+
             # Update timestamps and connection status
             self._last_updated = dt_util.now()
             self._connection_ok = True
