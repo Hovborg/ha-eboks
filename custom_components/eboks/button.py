@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .api import EboksApi
 from .const import CONF_CPR, DOMAIN
+from .coordinator import EboksCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,9 +25,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up e-Boks buttons."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-    cpr = entry.data[CONF_CPR]
+    coordinator: EboksCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    api: EboksApi = hass.data[DOMAIN][entry.entry_id]["api"]
+    cpr: str = entry.data[CONF_CPR]
 
     async_add_entities([
         EboksMarkAllReadButton(coordinator, api, entry, cpr),
@@ -31,13 +35,19 @@ async def async_setup_entry(
     ])
 
 
-class EboksMarkAllReadButton(CoordinatorEntity, ButtonEntity):
+class EboksMarkAllReadButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
     """Button to mark all unread messages as read."""
 
     _attr_icon = "mdi:email-check"
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, api, entry: ConfigEntry, cpr: str) -> None:
+    def __init__(
+        self,
+        coordinator: EboksCoordinator,
+        api: EboksApi,
+        entry: ConfigEntry,
+        cpr: str,
+    ) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
         self._api = api
@@ -47,21 +57,21 @@ class EboksMarkAllReadButton(CoordinatorEntity, ButtonEntity):
         self._attr_name = "Markér alle læst"
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device info."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": f"e-Boks ({self._cpr[:6]}...)",
-            "manufacturer": "e-Boks",
-            "model": "Digital Postkasse",
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name=f"e-Boks ({self._cpr[:6]}...)",
+            manufacturer="e-Boks",
+            model="Digital Postkasse",
+        )
 
     async def async_press(self) -> None:
         """Handle button press - mark all unread messages as read."""
         if not self.coordinator.data:
             return
 
-        messages = self.coordinator.data.get("messages", [])
+        messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])
         unread_messages = [m for m in messages if m.get("unread")]
 
         if not unread_messages:
@@ -76,17 +86,23 @@ class EboksMarkAllReadButton(CoordinatorEntity, ButtonEntity):
 
         for msg in messages_to_mark:
             try:
-                # Download content to mark as read
-                await self._api.get_message_content(
-                    msg.get("folder_id"),
-                    msg.get("id"),
-                )
-                marked_count += 1
-                _LOGGER.debug("Marked message %s as read (%d/%d)",
-                            msg.get("id"), marked_count, len(messages_to_mark))
+                folder_id: str | None = msg.get("folder_id")
+                message_id: str | None = msg.get("id")
+
+                if folder_id and message_id:
+                    # Download content to mark as read
+                    await self._api.get_message_content(folder_id, message_id)
+                    marked_count += 1
+                    _LOGGER.debug(
+                        "Marked message %s as read (%d/%d)",
+                        message_id,
+                        marked_count,
+                        len(messages_to_mark),
+                    )
 
                 # Wait between calls to avoid rate limiting
                 await asyncio.sleep(1)
+
             except Exception as err:
                 _LOGGER.error("Failed to mark message as read: %s", err)
                 # Re-authenticate and continue
@@ -104,13 +120,18 @@ class EboksMarkAllReadButton(CoordinatorEntity, ButtonEntity):
         await self.coordinator.async_request_refresh()
 
 
-class EboksRefreshButton(CoordinatorEntity, ButtonEntity):
+class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
     """Button to refresh e-Boks data."""
 
     _attr_icon = "mdi:refresh"
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, entry: ConfigEntry, cpr: str) -> None:
+    def __init__(
+        self,
+        coordinator: EboksCoordinator,
+        entry: ConfigEntry,
+        cpr: str,
+    ) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
         self._entry = entry
@@ -119,14 +140,14 @@ class EboksRefreshButton(CoordinatorEntity, ButtonEntity):
         self._attr_name = "Opdater"
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device info."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": f"e-Boks ({self._cpr[:6]}...)",
-            "manufacturer": "e-Boks",
-            "model": "Digital Postkasse",
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name=f"e-Boks ({self._cpr[:6]}...)",
+            manufacturer="e-Boks",
+            model="Digital Postkasse",
+        )
 
     async def async_press(self) -> None:
         """Handle button press - refresh data."""

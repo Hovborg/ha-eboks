@@ -1,16 +1,17 @@
 """Binary sensor platform for e-Boks integration."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTR_RECEIVED, ATTR_SENDER, ATTR_SUBJECT, CONF_CPR, DOMAIN
+from .coordinator import EboksCoordinator
 
 
 async def async_setup_entry(
@@ -19,13 +20,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up e-Boks binary sensors."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    cpr = entry.data[CONF_CPR]
+    coordinator: EboksCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    cpr: str = entry.data[CONF_CPR]
 
     async_add_entities([EboksUnreadSensor(coordinator, entry, cpr)])
 
 
-class EboksUnreadSensor(CoordinatorEntity, BinarySensorEntity):
+class EboksUnreadSensor(CoordinatorEntity[EboksCoordinator], BinarySensorEntity):
     """Binary sensor indicating unread messages."""
 
     _attr_icon = "mdi:email-alert"
@@ -33,7 +34,7 @@ class EboksUnreadSensor(CoordinatorEntity, BinarySensorEntity):
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: EboksCoordinator,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
@@ -45,32 +46,32 @@ class EboksUnreadSensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_name = "Ulæst post"
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device info."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": f"e-Boks ({self._cpr[:6]}...)",
-            "manufacturer": "e-Boks",
-            "model": "Digital Postkasse",
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name=f"e-Boks ({self._cpr[:6]}...)",
+            manufacturer="e-Boks",
+            model="Digital Postkasse",
+        )
 
     @property
     def is_on(self) -> bool:
         """Return True if there are unread messages."""
         if self.coordinator.data:
-            return self.coordinator.data.get("unread_count", 0) > 0
+            return int(self.coordinator.data.get("unread_count", 0)) > 0
         return False
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if not self.coordinator.data:
             return {}
 
-        latest = self.coordinator.data.get("latest_message")
-        unread_count = self.coordinator.data.get("unread_count", 0)
+        latest: dict[str, Any] | None = self.coordinator.data.get("latest_message")
+        unread_count: int = self.coordinator.data.get("unread_count", 0)
 
-        attrs = {"unread_count": unread_count}
+        attrs: dict[str, Any] = {"unread_count": unread_count}
 
         if latest and latest.get("unread"):
             attrs[ATTR_SENDER] = latest.get("sender")

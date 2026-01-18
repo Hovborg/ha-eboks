@@ -1,14 +1,14 @@
 """Sensor platform for e-Boks integration."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_FOLDER,
@@ -21,6 +21,7 @@ from .const import (
     CONF_CPR,
     DOMAIN,
 )
+from .coordinator import EboksCoordinator
 
 
 async def async_setup_entry(
@@ -29,10 +30,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up e-Boks sensors."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    cpr = entry.data[CONF_CPR]
+    coordinator: EboksCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    cpr: str = entry.data[CONF_CPR]
 
-    entities = [
+    entities: list[SensorEntity] = [
         EboksMessageCountSensor(coordinator, entry, cpr),
         EboksLatestMessageSensor(coordinator, entry, cpr),
     ]
@@ -44,12 +45,14 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class EboksBaseSensor(CoordinatorEntity, SensorEntity):
+class EboksBaseSensor(CoordinatorEntity[EboksCoordinator], SensorEntity):
     """Base class for e-Boks sensors."""
+
+    _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: EboksCoordinator,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
@@ -57,17 +60,16 @@ class EboksBaseSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._entry = entry
         self._cpr = cpr
-        self._attr_has_entity_name = True
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device info."""
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": f"e-Boks ({self._cpr[:6]}...)",
-            "manufacturer": "e-Boks",
-            "model": "Digital Postkasse",
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name=f"e-Boks ({self._cpr[:6]}...)",
+            manufacturer="e-Boks",
+            model="Digital Postkasse",
+        )
 
 
 class EboksMessageCountSensor(EboksBaseSensor):
@@ -78,7 +80,7 @@ class EboksMessageCountSensor(EboksBaseSensor):
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: EboksCoordinator,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
@@ -88,25 +90,27 @@ class EboksMessageCountSensor(EboksBaseSensor):
         self._attr_name = "Ulæste beskeder"
 
     @property
-    def native_value(self):
+    def native_value(self) -> int:
         """Return the number of unread messages."""
         if self.coordinator.data:
-            return self.coordinator.data.get("unread_count", 0)
+            return int(self.coordinator.data.get("unread_count", 0))
         return 0
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if not self.coordinator.data:
             return {}
 
-        folders = self.coordinator.data.get("folders", [])
+        folders: list[dict[str, Any]] = self.coordinator.data.get("folders", [])
+        messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])
+
         return {
             "folders": [
                 {"name": f["name"], "unread": f["unread"]}
                 for f in folders
             ],
-            "total_messages": len(self.coordinator.data.get("messages", [])),
+            "total_messages": len(messages),
         }
 
 
@@ -117,7 +121,7 @@ class EboksLatestMessageSensor(EboksBaseSensor):
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: EboksCoordinator,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
@@ -127,26 +131,26 @@ class EboksLatestMessageSensor(EboksBaseSensor):
         self._attr_name = "Seneste besked"
 
     @property
-    def native_value(self):
+    def native_value(self) -> str:
         """Return the subject of the latest message."""
         if self.coordinator.data:
-            latest = self.coordinator.data.get("latest_message")
+            latest: dict[str, Any] | None = self.coordinator.data.get("latest_message")
             if latest:
-                return latest.get("subject", "Ingen emne")
+                return str(latest.get("subject", "Ingen emne"))
         return "Ingen beskeder"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         if not self.coordinator.data:
             return {}
 
-        latest = self.coordinator.data.get("latest_message")
+        latest: dict[str, Any] | None = self.coordinator.data.get("latest_message")
         if not latest:
             return {}
 
         # Include last 20 messages with full details for services
-        messages = self.coordinator.data.get("messages", [])[:20]
+        messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])[:20]
 
         return {
             ATTR_SENDER: latest.get("sender"),
@@ -178,7 +182,7 @@ class EboksMessageSensor(EboksBaseSensor):
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
+        coordinator: EboksCoordinator,
         entry: ConfigEntry,
         cpr: str,
         position: int,
@@ -189,11 +193,11 @@ class EboksMessageSensor(EboksBaseSensor):
         self._attr_unique_id = f"{entry.entry_id}_message_{position}"
         self._attr_name = f"Besked {position}"
 
-    def _get_message(self) -> dict | None:
+    def _get_message(self) -> dict[str, Any] | None:
         """Get the message at this position."""
         if not self.coordinator.data:
             return None
-        messages = self.coordinator.data.get("messages", [])
+        messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])
         if len(messages) >= self._position:
             return messages[self._position - 1]
         return None
@@ -203,7 +207,7 @@ class EboksMessageSensor(EboksBaseSensor):
         """Return the subject of this message."""
         msg = self._get_message()
         if msg:
-            return msg.get("subject", "Ingen emne")
+            return str(msg.get("subject", "Ingen emne"))
         return "Ingen besked"
 
     @property
@@ -215,7 +219,7 @@ class EboksMessageSensor(EboksBaseSensor):
         return "mdi:email-open-outline"
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         msg = self._get_message()
         if not msg:
