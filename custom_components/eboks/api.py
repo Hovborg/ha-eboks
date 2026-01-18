@@ -262,12 +262,15 @@ class EboksApi:
         try:
             _LOGGER.info("Fetching mailbox 1 (Det offentlige)...")
             folders_1 = await self.get_folders(1)
-            _LOGGER.info("Got %d folders from mailbox 1", len(folders_1))
+            _LOGGER.info("Got %d folders from mailbox 1: %s", len(folders_1), [f.get("name") for f in folders_1])
             for f in folders_1:
                 f["mailbox_name"] = "Det offentlige"
             all_folders.extend(folders_1)
+            # Store the result for debugging
+            self._mailbox1_result = f"Got {len(folders_1)} folders"
         except EboksApiError as err:
             _LOGGER.warning("Failed to get folders from mailbox 1: %s", err)
+            self._mailbox1_result = f"Error: {err}"
 
         _LOGGER.info("Total folders from all mailboxes: %d", len(all_folders))
         return all_folders

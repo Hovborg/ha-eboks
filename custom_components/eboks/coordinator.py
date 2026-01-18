@@ -73,10 +73,12 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Got %d folders", len(folders))
 
             # Debug notification to show mailbox info
-            folder_info = ", ".join([f"{f.get('name')} ({f.get('mailbox_name', '?')})" for f in folders[:6]])
+            mailbox0_count = len([f for f in folders if f.get("mailbox_name") == "Virksomheder"])
+            mailbox1_count = len([f for f in folders if f.get("mailbox_name") == "Det offentlige"])
+            mailbox1_result = getattr(self.api, '_mailbox1_result', 'N/A')
             async_create(
                 self.hass,
-                f"Found {len(folders)} folders: {folder_info}",
+                f"Mailbox 0: {mailbox0_count} folders. Mailbox 1: {mailbox1_count} folders ({mailbox1_result}). Total: {len(folders)}",
                 title="e-Boks Debug",
                 notification_id="eboks_debug_mailboxes",
             )
