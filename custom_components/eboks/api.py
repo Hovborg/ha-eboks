@@ -241,9 +241,27 @@ class EboksApi:
 
     async def get_all_folders(self) -> list[dict[str, Any]]:
         """Get folders from all mailboxes (virksomheder + det offentlige)."""
-        # Currently only fetching mailbox 0 - mailbox 1 causes issues
-        # TODO: Debug why mailbox 1 breaks the refresh button
-        return await self.get_folders(0)
+        all_folders = []
+
+        # Mailbox 0: Virksomheder (businesses)
+        try:
+            folders_0 = await self.get_folders(0)
+            for f in folders_0:
+                f["mailbox_name"] = "Virksomheder"
+            all_folders.extend(folders_0)
+        except EboksApiError as err:
+            _LOGGER.warning("Failed to get folders from mailbox 0: %s", err)
+
+        # Mailbox 1: Det offentlige (government)
+        try:
+            folders_1 = await self.get_folders(1)
+            for f in folders_1:
+                f["mailbox_name"] = "Det offentlige"
+            all_folders.extend(folders_1)
+        except EboksApiError as err:
+            _LOGGER.warning("Failed to get folders from mailbox 1: %s", err)
+
+        return all_folders
 
     def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
         """Parse folders XML response."""
