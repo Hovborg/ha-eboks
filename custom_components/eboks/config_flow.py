@@ -202,7 +202,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle MitID authorization step."""
+        from .mitid_auth import MitIDAuthenticator
+
         errors: dict[str, str] = {}
+
+        # Ensure we have an authenticator (might be lost after HA restart)
+        if self._mitid_authenticator is None:
+            self._mitid_authenticator = MitIDAuthenticator()
+            self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
 
         if user_input is not None:
             authorization_code = user_input.get("authorization_code", "").strip()
@@ -250,6 +257,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception as err:
                 _LOGGER.exception("MitID authentication failed: %s", err)
                 errors["base"] = "mitid_auth_failed"
+                # Create NEW authenticator for fresh PKCE values
+                # (old code is consumed, need new auth URL)
+                self._mitid_authenticator = MitIDAuthenticator()
+                self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
 
         # Get the authorization URL
         auth_url = self._mitid_authenticator.get_authorization_url()
@@ -260,13 +271,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={
                 "auth_url": auth_url,
-                "instructions": (
-                    "1. Åbn linket ovenfor i en browser\n"
-                    "2. Log ind med MitID\n"
-                    "3. Browseren forsøger at åbne 'eboksdk://...' (fejler)\n"
-                    "4. Kopier 'code' parameteren fra URL'en\n"
-                    "5. Indsæt koden nedenfor"
-                ),
             },
         )
 

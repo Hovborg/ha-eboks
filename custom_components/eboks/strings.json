@@ -29,7 +29,7 @@
       },
       "mitid_authorize": {
         "title": "e-Boks - MitID Godkendelse",
-        "description": "For at fuldføre opsætningen skal du:\n\n1. Åbn linket nedenfor i en browser\n2. Log ind med MitID\n3. Browseren forsøger at åbne `eboksdk://ngdpoidc/callback?code=...`\n4. Kopier **koden** fra URL'en (teksten efter `code=` og før `&`)\n5. Indsæt koden nedenfor\n\n**MitID Link:** {auth_url}",
+        "description": "**Trin 1:** Klik på linket og log ind med MitID:\n\n[Åbn MitID Login]({auth_url})\n\n**Trin 2:** Efter login forsøger browseren at åbne `eboksdk://...`\n\n**Trin 3:** Kopier koden fra URL'en (efter `code=` og før `&`)\n\n**Trin 4:** Indsæt koden nedenfor",
         "data": {
           "authorization_code": "Autoriserings kode"
         },
