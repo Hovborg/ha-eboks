@@ -141,8 +141,8 @@ class EboksLatestMessageSensor(EboksBaseSensor):
         if not latest:
             return {}
 
-        # Also include last 5 messages
-        messages = self.coordinator.data.get("messages", [])[:5]
+        # Include last 20 messages with full details for services
+        messages = self.coordinator.data.get("messages", [])[:20]
 
         return {
             ATTR_SENDER: latest.get("sender"),
@@ -151,11 +151,15 @@ class EboksLatestMessageSensor(EboksBaseSensor):
             ATTR_FOLDER: latest.get("folder_name"),
             ATTR_MESSAGE_ID: latest.get("id"),
             ATTR_UNREAD: latest.get("unread"),
+            "folder_id": latest.get("folder_id"),
             ATTR_MESSAGES: [
                 {
+                    "message_id": m.get("id"),
+                    "folder_id": m.get("folder_id"),
                     "sender": m.get("sender"),
                     "subject": m.get("subject"),
                     "received": m.get("received"),
+                    "folder": m.get("folder_name"),
                     "unread": m.get("unread"),
                 }
                 for m in messages

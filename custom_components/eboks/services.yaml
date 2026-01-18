@@ -1,0 +1,48 @@
+download_message:
+  name: Download besked
+  description: Download en e-Boks besked som PDF til www/eboks mappen
+  fields:
+    message_id:
+      name: Besked ID
+      description: ID på beskeden der skal downloades (findes i sensor attributter)
+      required: true
+      example: "2026A01A05A23B35B27B854001"
+      selector:
+        text:
+    folder_id:
+      name: Mappe ID
+      description: ID på mappen beskeden ligger i
+      required: true
+      example: "9556357"
+      selector:
+        text:
+    filename:
+      name: Filnavn
+      description: Valgfrit filnavn (uden .pdf)
+      required: false
+      example: "kontoudskrift_januar"
+      selector:
+        text:
+
+mark_as_read:
+  name: Markér som læst
+  description: Markér en e-Boks besked som læst
+  fields:
+    message_id:
+      name: Besked ID
+      description: ID på beskeden der skal markeres som læst
+      required: true
+      example: "2026A01A05A23B35B27B854001"
+      selector:
+        text:
+    folder_id:
+      name: Mappe ID
+      description: ID på mappen beskeden ligger i
+      required: true
+      example: "9556357"
+      selector:
+        text:
+
+refresh:
+  name: Opdater
+  description: Opdater e-Boks data med det samme (normalt hvert 30. minut)

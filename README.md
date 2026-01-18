@@ -10,6 +10,9 @@ Home Assistant integration for the Danish e-Boks digital mailbox. Automatically 
 - **No MitID required** - Uses the mobile API with activation code
 - **Unread message count** - Track how many unread messages you have
 - **Latest message details** - See sender, subject, and received date
+- **Download PDF** - Download messages as PDF to view in browser
+- **Events** - Fire events when new messages arrive for automations
+- **Mark as read** - Mark messages as read via service call
 - **Binary sensor** - Trigger automations when new mail arrives
 - **Multiple accounts** - Support for multiple e-Boks accounts
 - **Danish & English** - Full translation support
@@ -33,8 +36,71 @@ Home Assistant integration for the Danish e-Boks digital mailbox. Automatically 
 - `subject` - Message subject
 - `received` - Received timestamp
 - `folder` - Folder name
+- `folder_id` - Folder ID (for services)
+- `message_id` - Message ID (for services)
 - `unread` - Whether message is unread
-- `messages` - Last 5 messages
+- `messages` - Last 20 messages with full details
+
+## Services
+
+### `eboks.download_message`
+Download a message as PDF to `/config/www/eboks/` folder.
+
+```yaml
+service: eboks.download_message
+data:
+  message_id: "2026A01A05A23B35B27B854001"
+  folder_id: "9556357"
+  filename: "kontoudskrift_januar"  # optional
+```
+
+The PDF will be available at `/local/eboks/filename.pdf` in your browser.
+
+### `eboks.mark_as_read`
+Mark a message as read.
+
+```yaml
+service: eboks.mark_as_read
+data:
+  message_id: "2026A01A05A23B35B27B854001"
+  folder_id: "9556357"
+```
+
+### `eboks.refresh`
+Force refresh of e-Boks data (normally updates every 30 minutes).
+
+```yaml
+service: eboks.refresh
+```
+
+## Events
+
+### `eboks_new_message`
+Fired when a new unread message is detected.
+
+```yaml
+automation:
+  - alias: "e-Boks - Event-baseret notifikation"
+    trigger:
+      - platform: event
+        event_type: eboks_new_message
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "📬 Ny e-Boks besked"
+          message: "Fra: {{ trigger.event.data.sender }} - {{ trigger.event.data.subject }}"
+          data:
+            actions:
+              - action: DOWNLOAD_PDF
+                title: "Download PDF"
+```
+
+Event data includes: `message_id`, `folder_id`, `sender`, `subject`, `received`, `folder`
+
+### `eboks_unread_changed`
+Fired when the unread count changes.
+
+Event data includes: `previous_count`, `current_count`, `difference`
 
 ## Installation
 
