@@ -197,8 +197,8 @@ class EboksApi:
                 _LOGGER.debug("Updated nonce: %s...", self._nonce[:8])
                 break
 
-    async def get_folders(self) -> list[dict[str, Any]]:
-        """Get list of mail folders."""
+    async def get_folders(self, mailbox_id: int = 0) -> list[dict[str, Any]]:
+        """Get list of mail folders from a specific mailbox."""
         if not self._user_id:
             await self.authenticate()
 
@@ -207,23 +207,35 @@ class EboksApi:
 
         try:
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/0/mail/folders",
+                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folders",
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
                     self._update_nonce_from_response(response)
                     text = await response.text()
-                    return self._parse_folders(text)
+                    return self._parse_folders(text, mailbox_id)
                 elif response.status == 401:
                     # Session expired, re-authenticate
                     await self.authenticate()
-                    return await self.get_folders()
+                    return await self.get_folders(mailbox_id)
                 else:
                     raise EboksApiError(f"Failed to get folders", response.status)
         except aiohttp.ClientError as err:
             raise EboksApiError(f"Connection error: {err}") from err
 
-    def _parse_folders(self, xml_text: str) -> list[dict[str, Any]]:
+    async def get_all_folders(self) -> list[dict[str, Any]]:
+        """Get folders from all mailboxes (virksomheder + det offentlige)."""
+        all_folders = []
+        # Mailbox 0 = Post fra virksomheder, Mailbox 1 = Post fra det offentlige
+        for mailbox_id in [0, 1]:
+            try:
+                folders = await self.get_folders(mailbox_id)
+                all_folders.extend(folders)
+            except EboksApiError as err:
+                _LOGGER.warning("Failed to get folders from mailbox %d: %s", mailbox_id, err)
+        return all_folders
+
+    def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
         """Parse folders XML response."""
         folders = []
         try:
@@ -233,13 +245,14 @@ class EboksApi:
                     "id": folder.get("id"),
                     "name": folder.get("name"),
                     "unread": int(folder.get("unread", 0)),
+                    "mailbox_id": mailbox_id,
                 })
         except ET.ParseError as err:
             _LOGGER.error("Failed to parse folders XML: %s", err)
         return folders
 
     async def get_messages(
-        self, folder_id: str = "0", skip: int = 0, take: int = 100
+        self, folder_id: str = "0", mailbox_id: int = 0, skip: int = 0, take: int = 100
     ) -> list[dict[str, Any]]:
         """Get messages from a folder."""
         if not self._user_id:
@@ -250,7 +263,7 @@ class EboksApi:
 
         try:
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/0/mail/folder/{folder_id}?skip={skip}&take={take}",
+                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folder/{folder_id}?skip={skip}&take={take}",
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
@@ -259,7 +272,7 @@ class EboksApi:
                     return self._parse_messages(text)
                 elif response.status == 401:
                     await self.authenticate()
-                    return await self.get_messages(folder_id, skip, take)
+                    return await self.get_messages(folder_id, mailbox_id, skip, take)
                 else:
                     raise EboksApiError(f"Failed to get messages", response.status)
         except aiohttp.ClientError as err:
@@ -291,7 +304,7 @@ class EboksApi:
         return messages
 
     async def get_message_content(
-        self, folder_id: str, message_id: str
+        self, folder_id: str, message_id: str, mailbox_id: int = 0
     ) -> bytes | None:
         """Download message content."""
         if not self._user_id:
@@ -302,7 +315,7 @@ class EboksApi:
 
         try:
             async with session.get(
-                f"{API_BASE_URL}/{self._user_id}/0/mail/folder/{folder_id}/message/{message_id}/content",
+                f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folder/{folder_id}/message/{message_id}/content",
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
@@ -310,28 +323,35 @@ class EboksApi:
                     return await response.read()
                 elif response.status == 401:
                     await self.authenticate()
-                    return await self.get_message_content(folder_id, message_id)
+                    return await self.get_message_content(folder_id, message_id, mailbox_id)
                 else:
                     raise EboksApiError(f"Failed to get message content", response.status)
         except aiohttp.ClientError as err:
             raise EboksApiError(f"Connection error: {err}") from err
 
     async def get_all_messages(self) -> list[dict[str, Any]]:
-        """Get all messages from all folders."""
+        """Get all messages from all folders in all mailboxes."""
         all_messages = []
-        folders = await self.get_folders()
+        folders = await self.get_all_folders()
 
         for folder in folders:
-            messages = await self.get_messages(folder["id"])
-            for msg in messages:
-                msg["folder_name"] = folder["name"]
-            all_messages.extend(messages)
+            try:
+                messages = await self.get_messages(
+                    folder["id"],
+                    mailbox_id=folder.get("mailbox_id", 0)
+                )
+                for msg in messages:
+                    msg["folder_name"] = folder["name"]
+                    msg["mailbox_id"] = folder.get("mailbox_id", 0)
+                all_messages.extend(messages)
+            except EboksApiError as err:
+                _LOGGER.warning("Failed to get messages from folder %s: %s", folder["id"], err)
 
         # Sort by received date, newest first
         all_messages.sort(key=lambda x: x.get("received", ""), reverse=True)
         return all_messages
 
     async def get_unread_count(self) -> int:
-        """Get total unread message count."""
-        folders = await self.get_folders()
+        """Get total unread message count from all mailboxes."""
+        folders = await self.get_all_folders()
         return sum(folder.get("unread", 0) for folder in folders)

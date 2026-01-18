@@ -61,7 +61,7 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             messages = await self.api.get_all_messages()
             unread_count = await self.api.get_unread_count()
-            folders = await self.api.get_folders()
+            folders = await self.api.get_all_folders()
 
             # Update timestamps and connection status
             self._last_updated = dt_util.now()
