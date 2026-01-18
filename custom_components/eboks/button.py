@@ -151,5 +151,12 @@ class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press - refresh data."""
-        _LOGGER.info("Refreshing e-Boks data")
+        _LOGGER.info("Refreshing e-Boks data - re-authenticating first")
+        # Re-authenticate to ensure fresh session
+        api: EboksApi = self.hass.data[DOMAIN][self._entry.entry_id]["api"]
+        try:
+            await api.authenticate()
+            _LOGGER.debug("Re-authentication successful")
+        except Exception as err:
+            _LOGGER.error("Re-authentication failed: %s", err)
         await self.coordinator.async_request_refresh()
