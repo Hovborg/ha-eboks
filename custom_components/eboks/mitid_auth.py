@@ -1,4 +1,16 @@
-"""MitID OAuth2 authentication for e-Boks."""
+"""MitID OAuth2 authentication for e-Boks.
+
+This module handles the complete MitID authentication flow for accessing
+Digital Post (Post fra det offentlige) via e-Boks.
+
+The flow is:
+1. User visits authorization URL and completes MitID login
+2. Browser redirects to custom URI with authorization code
+3. Code is exchanged at digitalpost.dk for access token
+4. Token is exchanged at digitalpostproxy.e-boks.dk for usertoken
+5. Usertoken is exchanged at oauth-dk.e-boks.com for e-Boks access token
+6. e-Boks access token is used to access the Mobile JSON API
+"""
 from __future__ import annotations
 
 import base64
@@ -15,18 +27,27 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 _LOGGER = logging.getLogger(__name__)
 
-# OAuth2 endpoints
+# OAuth2 endpoints (verified working 2026-01-19)
 DIGITALPOST_AUTH_URL = "https://gateway.digitalpost.dk/auth/oauth/authorize"
 DIGITALPOST_TOKEN_URL = "https://digitalpost.dk/auth/oauth/token"
-EBOKS_PROXY_URL = "https://digitalpostproxy.e-boks.dk/loginservice"
+EBOKS_PROXY_URL = "https://digitalpostproxy.e-boks.dk/loginservice/v2/connect"
 EBOKS_OAUTH_URL = "https://oauth-dk.e-boks.com/1/connect/token"
 EBOKS_MOBILE_API = "https://mobile-api-dk.e-boks.com"
 
-# OAuth2 client credentials (from Net-Eboks)
-OAUTH_CLIENT_ID = "e-boks-app"
-OAUTH_CLIENT_SECRET = "digitalpost"  # Base64 encoded in actual request
-OAUTH_REDIRECT_URI = "dk.e-boks.app://oauth"
+# OAuth2 client credentials for digitalpost.dk (step 1)
+# These are the official e-Boks mobile app credentials
+OAUTH_CLIENT_ID = "e-boks-mobile"
+OAUTH_CLIENT_SECRET = "y0vKRKoVvqO%N3HBDK0T5bbzqo_eZsI0"
+OAUTH_REDIRECT_URI = "eboksdk://ngdpoidc/callback"
 OAUTH_SCOPE = "openid"
+
+# Pre-computed Basic auth header for digitalpost.dk token endpoint
+# Base64 of "e-boks-mobile:y0vKRKoVvqO%N3HBDK0T5bbzqo_eZsI0"
+DIGITALPOST_BASIC_AUTH = "ZS1ib2tzLW1vYmlsZTp5MHZLUktvVnZxTyVOM0hCREswVDViYnpxb19lWnNJMA=="
+
+# OAuth2 client credentials for oauth-dk.e-boks.com (step 3)
+EBOKS_CLIENT_ID = "MobileApp-Short-Custom-id"
+EBOKS_CLIENT_SECRET = "QmaENW6MeYwwjzF5"
 
 
 @dataclass
@@ -35,9 +56,10 @@ class MitIDCredentials:
 
     user_id: str
     name: str
-    private_key_pem: str
     device_id: str
-    access_token: str | None = None
+    access_token: str
+    refresh_token: str | None = None
+    private_key_pem: str = ""  # Not used for MitID, kept for backwards compatibility
 
 
 def generate_rsa_keypair() -> tuple[str, str]:
@@ -106,24 +128,33 @@ def sign_challenge_rsa(private_key_pem: str, challenge: str) -> str:
 
 
 class MitIDAuthenticator:
-    """Handle MitID OAuth2 authentication flow for e-Boks."""
+    """Handle MitID OAuth2 authentication flow for e-Boks.
 
-    def __init__(self, cpr: str, password: str) -> None:
-        """Initialize the authenticator.
+    Usage:
+        1. Create authenticator instance
+        2. Call get_authorization_url() to get the MitID login URL
+        3. User opens URL in browser, completes MitID login
+        4. Browser tries to redirect to eboksdk://... (fails)
+        5. User copies the 'code' parameter from the URL
+        6. Call complete_authentication(code) to exchange for tokens
 
-        Args:
-            cpr: CPR number (without dash)
-            password: e-Boks mobile password
-        """
-        self._cpr = cpr.replace("-", "")
-        self._password = password
+    Example:
+        auth = MitIDAuthenticator()
+        url = auth.get_authorization_url()
+        print(f"Open this URL: {url}")
+        code = input("Enter the code from the callback URL: ")
+        credentials = await auth.complete_authentication(code)
+    """
+
+    def __init__(self) -> None:
+        """Initialize the authenticator."""
         self._device_id = str(uuid.uuid4()).upper()
         self._private_key_pem: str | None = None
         self._public_key_pem: str | None = None
         self._session: aiohttp.ClientSession | None = None
 
         # PKCE values
-        self._state = secrets.token_urlsafe(16)
+        self._state = secrets.token_urlsafe(32)
         self._nonce = secrets.token_urlsafe(16)
         self._code_verifier, self._code_challenge = generate_pkce_pair()
 
@@ -140,9 +171,19 @@ class MitIDAuthenticator:
     def get_authorization_url(self) -> str:
         """Get the MitID authorization URL for user to visit.
 
+        The user should open this URL in their browser, complete the MitID login,
+        and then copy the authorization code from the callback URL.
+
+        The callback URL will look like:
+        eboksdk://ngdpoidc/callback?code=XXXXX&state=...&session_state=...
+
+        The user needs to copy the 'code' parameter value.
+
         Returns:
             URL to redirect user to for MitID login
         """
+        import urllib.parse
+
         params = {
             "client_id": OAUTH_CLIENT_ID,
             "redirect_uri": OAUTH_REDIRECT_URI,
@@ -152,11 +193,21 @@ class MitIDAuthenticator:
             "nonce": self._nonce,
             "code_challenge": self._code_challenge,
             "code_challenge_method": "S256",
-            "login_hint": f"cpr:{self._cpr}",
+            "idp": "nemloginEboksRealm",  # Required for MitID/NemLog-in
         }
 
-        query = "&".join(f"{k}={v}" for k, v in params.items())
+        query = urllib.parse.urlencode(params)
         return f"{DIGITALPOST_AUTH_URL}?{query}"
+
+    @property
+    def code_verifier(self) -> str:
+        """Return the code verifier for PKCE."""
+        return self._code_verifier
+
+    @property
+    def state(self) -> str:
+        """Return the state parameter for validation."""
+        return self._state
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Ensure we have an aiohttp session."""
@@ -171,23 +222,18 @@ class MitIDAuthenticator:
             self._session = None
 
     async def exchange_code_for_tokens(self, authorization_code: str) -> dict[str, Any]:
-        """Exchange OAuth authorization code for tokens.
+        """Exchange OAuth authorization code for DigitalPost tokens (Step 1).
 
         Args:
             authorization_code: Code received from MitID callback
 
         Returns:
-            Token response dict
+            Token response dict with access_token, refresh_token, etc.
         """
         session = await self._ensure_session()
 
-        # Base64 encode client credentials
-        credentials = base64.b64encode(
-            f"{OAUTH_CLIENT_ID}:{OAUTH_CLIENT_SECRET}".encode()
-        ).decode()
-
         headers = {
-            "Authorization": f"Basic {credentials}",
+            "Authorization": f"Basic {DIGITALPOST_BASIC_AUTH}",
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
@@ -198,6 +244,8 @@ class MitIDAuthenticator:
             "code_verifier": self._code_verifier,
         }
 
+        _LOGGER.debug("Exchanging authorization code at digitalpost.dk...")
+
         async with session.post(
             DIGITALPOST_TOKEN_URL,
             headers=headers,
@@ -205,19 +253,21 @@ class MitIDAuthenticator:
         ) as response:
             if response.status != 200:
                 error = await response.text()
-                _LOGGER.error("Token exchange failed: %s", error)
+                _LOGGER.error("Token exchange failed (status %d): %s", response.status, error)
                 raise Exception(f"Token exchange failed: {error}")
 
-            return await response.json()
+            result = await response.json()
+            _LOGGER.debug("Got DigitalPost access token (expires_in: %s)", result.get("expires_in"))
+            return result
 
     async def get_user_token(self, bearer_token: str) -> dict[str, Any]:
-        """Get user token from e-Boks proxy.
+        """Get e-Boks user token from DigitalPost proxy (Step 2).
 
         Args:
-            bearer_token: Bearer token from OAuth
+            bearer_token: Access token from DigitalPost OAuth
 
         Returns:
-            User token response
+            User token response with userToken field
         """
         session = await self._ensure_session()
 
@@ -226,56 +276,42 @@ class MitIDAuthenticator:
             "Content-Type": "application/json",
         }
 
+        _LOGGER.debug("Getting user token from digitalpostproxy.e-boks.dk...")
+
         async with session.get(
-            f"{EBOKS_PROXY_URL}/token",
+            f"{EBOKS_PROXY_URL}/usertoken",
             headers=headers,
         ) as response:
             if response.status != 200:
                 error = await response.text()
-                _LOGGER.error("User token request failed: %s", error)
+                _LOGGER.error("User token request failed (status %d): %s", response.status, error)
                 raise Exception(f"User token request failed: {error}")
 
-            return await response.json()
-
-    async def verify_password(self, user_token: str) -> bool:
-        """Verify e-Boks password.
-
-        Args:
-            user_token: User token from proxy
-
-        Returns:
-            True if password is valid
-        """
-        session = await self._ensure_session()
-
-        headers = {
-            "Authorization": f"Bearer {user_token}",
-            "Content-Type": "application/json",
-        }
-
-        data = {
-            "password": self._password,
-        }
-
-        async with session.post(
-            f"{EBOKS_PROXY_URL}/verify",
-            headers=headers,
-            json=data,
-        ) as response:
-            return response.status == 200
+            result = await response.json()
+            _LOGGER.debug("Got e-Boks user token")
+            return result
 
     async def get_eboks_access_token(self, user_token: str) -> dict[str, Any]:
-        """Get e-Boks access token.
+        """Get e-Boks access token (Step 3).
+
+        Exchanges the userToken from step 2 for an e-Boks access token
+        that can be used with the Mobile JSON API.
 
         Args:
-            user_token: User token from proxy
+            user_token: User token from digitalpostproxy (JWT)
 
         Returns:
-            e-Boks token response
+            e-Boks token response with access_token and refresh_token
         """
         session = await self._ensure_session()
 
+        # Build Basic auth header from e-Boks client credentials
+        eboks_credentials = base64.b64encode(
+            f"{EBOKS_CLIENT_ID}:{EBOKS_CLIENT_SECRET}".encode()
+        ).decode()
+
         headers = {
+            "Authorization": f"Basic {eboks_credentials}",
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
@@ -283,7 +319,10 @@ class MitIDAuthenticator:
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": user_token,
             "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "scope": "mobileapi offline_access",
         }
+
+        _LOGGER.debug("Getting e-Boks access token from oauth-dk.e-boks.com...")
 
         async with session.post(
             EBOKS_OAUTH_URL,
@@ -292,10 +331,12 @@ class MitIDAuthenticator:
         ) as response:
             if response.status != 200:
                 error = await response.text()
-                _LOGGER.error("e-Boks token request failed: %s", error)
+                _LOGGER.error("e-Boks token request failed (status %d): %s", response.status, error)
                 raise Exception(f"e-Boks token request failed: {error}")
 
-            return await response.json()
+            result = await response.json()
+            _LOGGER.debug("Got e-Boks access token (expires_in: %s)", result.get("expires_in"))
+            return result
 
     async def register_device(self, access_token: str) -> dict[str, Any]:
         """Register device with e-Boks using RSA public key.
@@ -368,10 +409,57 @@ class MitIDAuthenticator:
 
             return await response.json()
 
+    async def refresh_eboks_token(self, refresh_token: str) -> dict[str, Any]:
+        """Refresh e-Boks access token.
+
+        Args:
+            refresh_token: Refresh token from previous authentication
+
+        Returns:
+            New token response with access_token and refresh_token
+        """
+        session = await self._ensure_session()
+
+        eboks_credentials = base64.b64encode(
+            f"{EBOKS_CLIENT_ID}:{EBOKS_CLIENT_SECRET}".encode()
+        ).decode()
+
+        headers = {
+            "Authorization": f"Basic {eboks_credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "scope": "mobileapi offline_access",
+        }
+
+        _LOGGER.debug("Refreshing e-Boks access token...")
+
+        async with session.post(
+            EBOKS_OAUTH_URL,
+            headers=headers,
+            data=data,
+        ) as response:
+            if response.status != 200:
+                error = await response.text()
+                _LOGGER.error("Token refresh failed (status %d): %s", response.status, error)
+                raise Exception(f"Token refresh failed: {error}")
+
+            result = await response.json()
+            _LOGGER.debug("Refreshed e-Boks access token (expires_in: %s)", result.get("expires_in"))
+            return result
+
     async def complete_authentication(
         self, authorization_code: str
     ) -> MitIDCredentials:
         """Complete the full MitID authentication flow.
+
+        This performs the 3-step token exchange:
+        1. Exchange authorization code at digitalpost.dk
+        2. Get userToken from digitalpostproxy.e-boks.dk
+        3. Get e-Boks access token from oauth-dk.e-boks.com
 
         Args:
             authorization_code: Code received from MitID callback
@@ -380,41 +468,48 @@ class MitIDAuthenticator:
             MitIDCredentials with all necessary authentication data
         """
         try:
-            # Step 1: Exchange code for tokens
-            _LOGGER.info("Exchanging authorization code for tokens...")
+            # Step 1: Exchange code for DigitalPost tokens
+            _LOGGER.info("Step 1/4: Exchanging authorization code...")
             token_response = await self.exchange_code_for_tokens(authorization_code)
             bearer_token = token_response.get("access_token")
 
+            if not bearer_token:
+                raise Exception("No access_token in DigitalPost response")
+
             # Step 2: Get user token from e-Boks proxy
-            _LOGGER.info("Getting user token...")
+            _LOGGER.info("Step 2/4: Getting user token from e-Boks proxy...")
             user_token_response = await self.get_user_token(bearer_token)
-            user_token = user_token_response.get("token")
+            user_token = user_token_response.get("userToken")
 
-            # Step 3: Verify password
-            _LOGGER.info("Verifying password...")
-            if not await self.verify_password(user_token):
-                raise Exception("Password verification failed")
+            if not user_token:
+                raise Exception("No userToken in proxy response")
 
-            # Step 4: Get e-Boks access token
-            _LOGGER.info("Getting e-Boks access token...")
+            # Step 3: Get e-Boks access token
+            _LOGGER.info("Step 3/4: Getting e-Boks access token...")
             eboks_token_response = await self.get_eboks_access_token(user_token)
             access_token = eboks_token_response.get("access_token")
+            refresh_token = eboks_token_response.get("refresh_token")
 
-            # Step 5: Get user profile
-            _LOGGER.info("Getting user profile...")
+            if not access_token:
+                raise Exception("No access_token in e-Boks response")
+
+            # Step 4: Get user profile
+            _LOGGER.info("Step 4/4: Getting user profile...")
             profile = await self.get_user_profile(access_token)
 
-            # Step 6: Register device with RSA key
-            _LOGGER.info("Registering device...")
-            await self.register_device(access_token)
+            _LOGGER.info("MitID authentication completed successfully for: %s", profile.get("name", "Unknown"))
 
             return MitIDCredentials(
-                user_id=profile.get("userId", ""),
+                user_id=str(profile.get("id", "")),
                 name=profile.get("name", ""),
-                private_key_pem=self._private_key_pem,
+                private_key_pem="",  # Not used for MitID auth
                 device_id=self._device_id,
                 access_token=access_token,
+                refresh_token=refresh_token,
             )
 
+        except Exception as e:
+            _LOGGER.error("MitID authentication failed: %s", e)
+            raise
         finally:
             await self.close()

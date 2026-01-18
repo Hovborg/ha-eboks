@@ -25,24 +25,16 @@
       },
       "mitid_credentials": {
         "title": "e-Boks - MitID Login",
-        "description": "Indtast dit CPR-nummer og din e-Boks mobil PIN-kode.\n\n**MitID giver fuld adgang** til alle postkasser inkl. Digital Post fra det offentlige.",
-        "data": {
-          "cpr": "CPR-nummer",
-          "password": "Mobil PIN-kode"
-        },
-        "data_description": {
-          "cpr": "Dit CPR-nummer uden bindestreg",
-          "password": "Din 4-cifrede mobil PIN-kode"
-        }
+        "description": "Du vil nu blive sendt til MitID for at logge ind."
       },
       "mitid_authorize": {
         "title": "e-Boks - MitID Godkendelse",
-        "description": "For at fuldføre opsætningen skal du:\n\n1. Åbn linket nedenfor i en browser\n2. Log ind med MitID\n3. Efter login bliver du sendt til en side der starter med `dk.e-boks.app://oauth`\n4. Kopiér **hele URL'en** (inkl. `code=...` delen)\n5. Indsæt URL'en eller kun koden nedenfor\n\n**MitID Link:** {auth_url}",
+        "description": "For at fuldføre opsætningen skal du:\n\n1. Åbn linket nedenfor i en browser\n2. Log ind med MitID\n3. Browseren forsøger at åbne `eboksdk://ngdpoidc/callback?code=...`\n4. Kopier **koden** fra URL'en (teksten efter `code=` og før `&`)\n5. Indsæt koden nedenfor\n\n**MitID Link:** {auth_url}",
         "data": {
-          "authorization_code": "Autoriserings URL eller kode"
+          "authorization_code": "Autoriserings kode"
         },
         "data_description": {
-          "authorization_code": "Indsæt hele URL'en fra redirect eller kun koden efter 'code='"
+          "authorization_code": "Koden fra callback URL'en (efter 'code=' og før '&')"
         }
       },
       "reauth_confirm": {

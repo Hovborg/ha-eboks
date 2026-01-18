@@ -17,14 +17,18 @@ from .api import EboksApi, EboksApiError, EboksAuthError
 from .const import (
     AUTH_TYPE_ACTIVATION_CODE,
     AUTH_TYPE_MITID,
+    CONF_ACCESS_TOKEN,
     CONF_ACTIVATION_CODE,
     CONF_AUTH_TYPE,
     CONF_CPR,
     CONF_DEVICE_ID,
+    CONF_INBOX_FOLDER_ID,
     CONF_MESSAGE_COUNT,
     CONF_NOTIFY_SENDERS,
     CONF_PRIVATE_KEY,
+    CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
+    CONF_USER_ID,
     DEFAULT_MESSAGE_COUNT,
     DEFAULT_NOTIFY_SENDERS,
     DEFAULT_SCAN_INTERVAL,
@@ -46,15 +50,7 @@ STEP_ACTIVATION_CODE_SCHEMA = vol.Schema(
     }
 )
 
-# Schema for MitID authentication - step 1: credentials
-STEP_MITID_CREDENTIALS_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_CPR): str,
-        vol.Required(CONF_PASSWORD): str,
-    }
-)
-
-# Schema for MitID authentication - step 2: authorization code
+# Schema for MitID authentication - authorization code input
 STEP_MITID_AUTH_CODE_SCHEMA = vol.Schema(
     {
         vol.Required("authorization_code"): str,
@@ -93,31 +89,33 @@ async def validate_activation_code_input(
 async def validate_mitid_input(
     hass: HomeAssistant, data: dict[str, Any]
 ) -> dict[str, Any]:
-    """Validate MitID RSA authentication."""
+    """Validate MitID authentication by testing the API."""
+    from .mobile_api import EboksMobileApi, EboksMobileApiError, EboksMobileAuthError
+
     session = async_get_clientsession(hass)
 
-    api = EboksApi(
-        cpr=data[CONF_CPR],
-        password=data[CONF_PASSWORD],
-        device_id=data.get(CONF_DEVICE_ID),
-        private_key_pem=data[CONF_PRIVATE_KEY],
+    api = EboksMobileApi(
+        access_token=data[CONF_ACCESS_TOKEN],
+        refresh_token=data.get(CONF_REFRESH_TOKEN),
         session=session,
     )
 
     try:
-        await api.authenticate()
-        # Test that we can get folders
+        # Test that we can get profile and folders
+        profile = await api.get_profile()
         folders = await api.get_folders()
-        _LOGGER.info("MitID auth successful, got %d folders", len(folders))
-    except EboksAuthError as err:
-        raise InvalidAuth from err
-    except EboksApiError as err:
-        raise CannotConnect from err
+        _LOGGER.info("MitID auth successful for %s, got %d folders",
+                    profile.get("name", "Unknown"), len(folders))
 
-    return {
-        "title": f"e-Boks MitID ({data[CONF_CPR][:6]}...)",
-        "device_id": api.device_id,
-    }
+        return {
+            "title": f"e-Boks ({profile.get('name', 'MitID')})",
+            "user_id": str(profile.get("id", "")),
+            "name": profile.get("name", ""),
+        }
+    except EboksMobileAuthError as err:
+        raise InvalidAuth from err
+    except EboksMobileApiError as err:
+        raise CannotConnect from err
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -191,38 +189,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_mitid_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle MitID credentials input."""
-        errors: dict[str, str] = {}
+        """Handle MitID authentication - show authorization URL."""
+        # Initialize MitID authenticator and go directly to authorize step
+        from .mitid_auth import MitIDAuthenticator
 
-        if user_input is not None:
-            self._data = user_input
+        self._mitid_authenticator = MitIDAuthenticator()
+        self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
 
-            # Create MitID authenticator and get auth URL
-            try:
-                from .mitid_auth import MitIDAuthenticator
-
-                self._mitid_authenticator = MitIDAuthenticator(
-                    cpr=user_input[CONF_CPR],
-                    password=user_input[CONF_PASSWORD],
-                )
-
-                # Store device_id for later
-                self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
-
-                return await self.async_step_mitid_authorize()
-
-            except Exception as err:
-                _LOGGER.exception("Failed to initialize MitID authenticator: %s", err)
-                errors["base"] = "unknown"
-
-        return self.async_show_form(
-            step_id="mitid_credentials",
-            data_schema=STEP_MITID_CREDENTIALS_SCHEMA,
-            errors=errors,
-            description_placeholders={
-                "info": "Indtast dit CPR-nummer og din e-Boks mobil­adgangskode"
-            },
-        )
+        return await self.async_step_mitid_authorize()
 
     async def async_step_mitid_authorize(
         self, user_input: dict[str, Any] | None = None
@@ -234,7 +208,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             authorization_code = user_input.get("authorization_code", "").strip()
 
             # Extract code from URL if user pasted the full redirect URL
-            # URL format: dk.e-boks.app://oauth?code=XXXXX&state=XXXXX
+            # URL format: eboksdk://ngdpoidc/callback?code=XXXXX&state=...
             if "code=" in authorization_code:
                 import urllib.parse
                 try:
@@ -258,15 +232,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
                 # Store credentials
-                self._data[CONF_PRIVATE_KEY] = credentials.private_key_pem
+                self._data[CONF_ACCESS_TOKEN] = credentials.access_token
+                self._data[CONF_REFRESH_TOKEN] = credentials.refresh_token
+                self._data[CONF_USER_ID] = credentials.user_id
                 self._data[CONF_DEVICE_ID] = credentials.device_id
                 self._data[CONF_AUTH_TYPE] = AUTH_TYPE_MITID
 
                 # Validate that we can connect
                 info = await validate_mitid_input(self.hass, self._data)
 
-                # Check if already configured
-                await self.async_set_unique_id(self._data[CONF_CPR])
+                # Use user_id as unique ID
+                await self.async_set_unique_id(f"mitid_{credentials.user_id}")
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(title=info["title"], data=self._data)
@@ -285,10 +261,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "auth_url": auth_url,
                 "instructions": (
-                    "1. Åbn linket nedenfor i en browser\n"
+                    "1. Åbn linket ovenfor i en browser\n"
                     "2. Log ind med MitID\n"
-                    "3. Kopier autoriserings­koden fra URL'en efter redirect\n"
-                    "4. Indsæt koden nedenfor"
+                    "3. Browseren forsøger at åbne 'eboksdk://...' (fejler)\n"
+                    "4. Kopier 'code' parameteren fra URL'en\n"
+                    "5. Indsæt koden nedenfor"
                 ),
             },
         )

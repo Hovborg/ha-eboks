@@ -4,9 +4,13 @@ from typing import Final
 
 DOMAIN: Final = "eboks"
 
-# API Configuration
+# XML API Configuration (for activation code auth)
 API_BASE_URL: Final = "https://rest.e-boks.dk/mobile/1/xml.svc/en-gb"
 API_USER_AGENT: Final = "eboks/35 CFNetwork/672.1.15 Darwin/14.0.0"
+
+# Mobile JSON API Configuration (for MitID auth)
+MOBILE_API_BASE_URL: Final = "https://mobile-api-dk.e-boks.com"
+MOBILE_API_VERSION: Final = "2"  # API version for message endpoints
 
 # Configuration keys
 CONF_CPR: Final = "cpr"
@@ -15,6 +19,10 @@ CONF_DEVICE_ID: Final = "device_id"
 CONF_ACTIVATION_CODE: Final = "activation_code"
 CONF_AUTH_TYPE: Final = "auth_type"
 CONF_PRIVATE_KEY: Final = "private_key"
+CONF_ACCESS_TOKEN: Final = "access_token"
+CONF_REFRESH_TOKEN: Final = "refresh_token"
+CONF_USER_ID: Final = "user_id"
+CONF_INBOX_FOLDER_ID: Final = "inbox_folder_id"
 
 # Authentication types
 AUTH_TYPE_ACTIVATION_CODE: Final = "activation_code"
