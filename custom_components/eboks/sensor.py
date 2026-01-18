@@ -209,14 +209,20 @@ class EboksMessageSensor(EboksBaseSensor):
         if not self.coordinator.data:
             return None
         messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])
-        # Filter to only inbox messages (folder_id "0" or folder_name "Indbakke")
+        # Filter to only inbox messages (folder name contains inbox/indbakke)
         inbox_messages = [
             m for m in messages
-            if m.get("folder_id") == "0" or m.get("folder_name") == "Indbakke"
+            if self._is_inbox_folder(m.get("folder_name", ""))
         ]
         if len(inbox_messages) >= self._position:
             return inbox_messages[self._position - 1]
         return None
+
+    @staticmethod
+    def _is_inbox_folder(folder_name: str) -> bool:
+        """Check if folder is the inbox folder."""
+        name_lower = folder_name.lower() if folder_name else ""
+        return "inbox" in name_lower or "indbakke" in name_lower
 
     @property
     def native_value(self) -> str:
