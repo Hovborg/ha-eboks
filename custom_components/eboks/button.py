@@ -1,6 +1,7 @@
 """Button platform for e-Boks integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.button import ButtonEntity
@@ -63,18 +64,41 @@ class EboksMarkAllReadButton(CoordinatorEntity, ButtonEntity):
         messages = self.coordinator.data.get("messages", [])
         unread_messages = [m for m in messages if m.get("unread")]
 
+        if not unread_messages:
+            _LOGGER.info("No unread messages to mark as read")
+            return
+
         _LOGGER.info("Marking %d messages as read", len(unread_messages))
 
-        for msg in unread_messages:
+        # Limit to first 10 to avoid overloading the API
+        messages_to_mark = unread_messages[:10]
+        marked_count = 0
+
+        for msg in messages_to_mark:
             try:
                 # Download content to mark as read
                 await self._api.get_message_content(
                     msg.get("folder_id"),
                     msg.get("id"),
                 )
-                _LOGGER.debug("Marked message %s as read", msg.get("id"))
+                marked_count += 1
+                _LOGGER.debug("Marked message %s as read (%d/%d)",
+                            msg.get("id"), marked_count, len(messages_to_mark))
+
+                # Wait between calls to avoid rate limiting
+                await asyncio.sleep(1)
             except Exception as err:
                 _LOGGER.error("Failed to mark message as read: %s", err)
+                # Re-authenticate and continue
+                try:
+                    await self._api.authenticate()
+                except Exception:
+                    break
+
+        _LOGGER.info("Marked %d messages as read", marked_count)
+
+        # Wait a bit before refreshing
+        await asyncio.sleep(2)
 
         # Refresh data
         await self.coordinator.async_request_refresh()
