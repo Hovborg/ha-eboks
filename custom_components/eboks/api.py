@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -131,22 +132,44 @@ class EboksApi:
                 data=session_xml,
             ) as response:
                 if response.status == 200:
-                    # Parse response for session info
+                    # Parse session credentials from X-EBOKS-AUTHENTICATE header
+                    auth_response = response.headers.get("X-EBOKS-AUTHENTICATE", "")
+                    _LOGGER.debug("Auth response header: %s", auth_response)
+
+                    # Parse header: sessionid="...",nonce="..."
+                    for part in auth_response.split(","):
+                        part = part.strip()
+                        match = re.match(r'(sessionid|nonce)="([^"]*)"', part)
+                        if match:
+                            key, value = match.groups()
+                            if key == "sessionid":
+                                self._session_id = value
+                            elif key == "nonce":
+                                self._nonce = value
+
+                    # Parse user info from XML body
                     text = await response.text()
+                    _LOGGER.debug("Session response: %s", text)
                     root = ET.fromstring(text)
 
-                    # Extract session data
-                    session_elem = root.find(".//eb:Session", NS)
-                    if session_elem is not None:
-                        self._session_id = session_elem.get("sessionid")
-                        self._nonce = session_elem.get("nonce")
-
+                    # Try with namespace first, then without
                     user_elem = root.find(".//eb:User", NS)
+                    if user_elem is None:
+                        user_elem = root.find(".//User")
+                    if user_elem is None:
+                        user_elem = root.find("User")
+
                     if user_elem is not None:
                         self._user_id = user_elem.get("userId")
+                        _LOGGER.debug("User ID: %s", self._user_id)
 
-                    _LOGGER.debug("Successfully authenticated with e-Boks")
-                    return True
+                    if self._session_id and self._nonce and self._user_id:
+                        _LOGGER.debug("Successfully authenticated with e-Boks (session=%s)", self._session_id[:8])
+                        return True
+                    else:
+                        _LOGGER.error("Missing session data: session_id=%s, nonce=%s, user_id=%s",
+                                     self._session_id, self._nonce, self._user_id)
+                        raise EboksApiError("Failed to parse session data")
                 elif response.status == 401:
                     raise EboksAuthError("Invalid credentials", response.status)
                 else:
@@ -163,6 +186,17 @@ class EboksApi:
         response = self._compute_response(self._nonce)
         return f'deviceid="{self._device_id}",nonce="{self._nonce}",sessionid="{self._session_id}",response="{response}"'
 
+    def _update_nonce_from_response(self, response: aiohttp.ClientResponse) -> None:
+        """Update nonce from response header for next request."""
+        auth_header = response.headers.get("X-EBOKS-AUTHENTICATE", "")
+        for part in auth_header.split(","):
+            part = part.strip()
+            match = re.match(r'nonce="([^"]*)"', part)
+            if match:
+                self._nonce = match.group(1)
+                _LOGGER.debug("Updated nonce: %s...", self._nonce[:8])
+                break
+
     async def get_folders(self) -> list[dict[str, Any]]:
         """Get list of mail folders."""
         if not self._user_id:
@@ -177,6 +211,7 @@ class EboksApi:
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
+                    self._update_nonce_from_response(response)
                     text = await response.text()
                     return self._parse_folders(text)
                 elif response.status == 401:
@@ -219,6 +254,7 @@ class EboksApi:
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
+                    self._update_nonce_from_response(response)
                     text = await response.text()
                     return self._parse_messages(text)
                 elif response.status == 401:
@@ -235,10 +271,14 @@ class EboksApi:
         try:
             root = ET.fromstring(xml_text)
             for msg in root.findall(".//eb:MessageInfo", NS):
+                # Sender is a child element with text content
+                sender_elem = msg.find("eb:Sender", NS)
+                sender = sender_elem.text if sender_elem is not None and sender_elem.text else ""
+
                 messages.append({
                     "id": msg.get("id"),
                     "subject": msg.get("name", ""),
-                    "sender": msg.get("sender", ""),
+                    "sender": sender,
                     "received": msg.get("receivedDateTime"),
                     "unread": msg.get("unread", "false").lower() == "true",
                     "format": msg.get("format"),
@@ -264,6 +304,7 @@ class EboksApi:
                 headers=self._get_headers(auth_header),
             ) as response:
                 if response.status == 200:
+                    self._update_nonce_from_response(response)
                     return await response.read()
                 elif response.status == 401:
                     await self.authenticate()

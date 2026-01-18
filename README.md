@@ -7,6 +7,7 @@ Home Assistant integration for the Danish e-Boks digital mailbox. Automatically 
 
 ## Features
 
+- **No MitID required** - Uses the mobile API with activation code
 - **Unread message count** - Track how many unread messages you have
 - **Latest message details** - See sender, subject, and received date
 - **Binary sensor** - Trigger automations when new mail arrives
