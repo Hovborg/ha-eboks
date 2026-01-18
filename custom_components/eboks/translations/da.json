@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "e-Boks Login",
+        "description": "Indtast dine e-Boks oplysninger. Find din aktiveringskode i e-Boks appen under Menu → Mobiladgang.",
+        "data": {
+          "cpr": "CPR-nummer",
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log ind på e-Boks igen",
+        "description": "Din e-Boks session er udløbet. Indtast venligst dine oplysninger igen.",
+        "data": {
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke forbinde til e-Boks",
+      "invalid_auth": "Ugyldige oplysninger",
+      "unknown": "Ukendt fejl opstod"
+    },
+    "abort": {
+      "already_configured": "Denne e-Boks konto er allerede konfigureret",
+      "reauth_successful": "Genautentificering lykkedes"
+    }
+  }
+}

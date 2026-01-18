@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "e-Boks Login",
+        "description": "Enter your e-Boks credentials. Find your activation code in the e-Boks app under Menu → Mobile Access.",
+        "data": {
+          "cpr": "CPR Number",
+          "password": "Mobile PIN Code",
+          "activation_code": "Activation Code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate e-Boks",
+        "description": "Your e-Boks session has expired. Please enter your credentials again.",
+        "data": {
+          "password": "Mobile PIN Code",
+          "activation_code": "Activation Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to e-Boks",
+      "invalid_auth": "Invalid credentials",
+      "unknown": "Unknown error occurred"
+    },
+    "abort": {
+      "already_configured": "This e-Boks account is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  }
+}

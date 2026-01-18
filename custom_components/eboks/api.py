@@ -1,0 +1,294 @@
+"""e-Boks API client."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import uuid
+from datetime import datetime
+from typing import Any
+from xml.etree import ElementTree as ET
+
+import aiohttp
+
+from .const import API_BASE_URL, API_USER_AGENT
+
+_LOGGER = logging.getLogger(__name__)
+
+# XML Namespace
+NS = {"eb": "urn:eboks:mobile:1.0.0"}
+
+
+class EboksApiError(Exception):
+    """Exception for e-Boks API errors."""
+
+    def __init__(self, message: str, status_code: int | None = None):
+        """Initialize the exception."""
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class EboksAuthError(EboksApiError):
+    """Exception for authentication errors."""
+
+
+class EboksApi:
+    """e-Boks API client."""
+
+    def __init__(
+        self,
+        cpr: str,
+        password: str,
+        device_id: str | None = None,
+        activation_code: str | None = None,
+        session: aiohttp.ClientSession | None = None,
+    ) -> None:
+        """Initialize the API client."""
+        self._cpr = cpr.replace("-", "")
+        self._password = password
+        self._device_id = device_id or str(uuid.uuid4()).upper()
+        self._activation_code = activation_code
+        self._session = session
+        self._session_id: str | None = None
+        self._nonce: str | None = None
+        self._user_id: str | None = None
+        self._owns_session = session is None
+
+    @property
+    def device_id(self) -> str:
+        """Return the device ID."""
+        return self._device_id
+
+    @property
+    def activation_code(self) -> str | None:
+        """Return the activation code."""
+        return self._activation_code
+
+    def _compute_challenge(self, datetime_str: str) -> str:
+        """Compute the authentication challenge hash."""
+        # Format: SHA256(SHA256("{activationCode}:{deviceId}:P:{userId}:DK:{password}:{datetime}"))
+        raw = f"{self._activation_code}:{self._device_id}:P:{self._cpr}:DK:{self._password}:{datetime_str}"
+        first_hash = hashlib.sha256(raw.encode()).hexdigest()
+        second_hash = hashlib.sha256(first_hash.encode()).hexdigest()
+        return second_hash
+
+    def _compute_response(self, challenge: str) -> str:
+        """Compute session response hash."""
+        raw = f"{self._activation_code}:{self._device_id}:{challenge}"
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _get_headers(self, auth_header: str | None = None) -> dict[str, str]:
+        """Get common headers for API requests."""
+        headers = {
+            "Content-Type": "application/xml",
+            "Accept": "*/*",
+            "User-Agent": API_USER_AGENT,
+        }
+        if auth_header:
+            headers["X-EBOKS-AUTHENTICATE"] = auth_header
+        return headers
+
+    async def _ensure_session(self) -> aiohttp.ClientSession:
+        """Ensure we have an aiohttp session."""
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+            self._owns_session = True
+        return self._session
+
+    async def close(self) -> None:
+        """Close the session if we own it."""
+        if self._owns_session and self._session:
+            await self._session.close()
+            self._session = None
+
+    async def authenticate(self) -> bool:
+        """Authenticate with e-Boks API."""
+        if not self._activation_code:
+            raise EboksAuthError("Activation code is required for authentication")
+
+        session = await self._ensure_session()
+
+        # Build datetime string
+        dt = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ")
+
+        # Compute challenge
+        challenge = self._compute_challenge(dt)
+
+        # Build auth header for logon
+        auth_header = f'logon deviceid="{self._device_id}",datetime="{dt}",challenge="{challenge}"'
+
+        # Build session XML
+        session_xml = f"""<?xml version="1.0" encoding="utf-8"?>
+<Logon xmlns="urn:eboks:mobile:1.0.0">
+    <App version="1.4.1" os="iOS" osVersion="9.0" device="iPhone" />
+    <User identity="{self._cpr}" identityType="P" nationality="DK" pincode="{self._password}" />
+</Logon>"""
+
+        try:
+            async with session.put(
+                f"{API_BASE_URL}/session",
+                headers=self._get_headers(auth_header),
+                data=session_xml,
+            ) as response:
+                if response.status == 200:
+                    # Parse response for session info
+                    text = await response.text()
+                    root = ET.fromstring(text)
+
+                    # Extract session data
+                    session_elem = root.find(".//eb:Session", NS)
+                    if session_elem is not None:
+                        self._session_id = session_elem.get("sessionid")
+                        self._nonce = session_elem.get("nonce")
+
+                    user_elem = root.find(".//eb:User", NS)
+                    if user_elem is not None:
+                        self._user_id = user_elem.get("userId")
+
+                    _LOGGER.debug("Successfully authenticated with e-Boks")
+                    return True
+                elif response.status == 401:
+                    raise EboksAuthError("Invalid credentials", response.status)
+                else:
+                    text = await response.text()
+                    raise EboksApiError(f"Authentication failed: {text}", response.status)
+        except aiohttp.ClientError as err:
+            raise EboksApiError(f"Connection error: {err}") from err
+
+    def _get_session_header(self) -> str:
+        """Get the session authentication header."""
+        if not self._session_id or not self._nonce:
+            raise EboksAuthError("Not authenticated")
+
+        response = self._compute_response(self._nonce)
+        return f'deviceid="{self._device_id}",nonce="{self._nonce}",sessionid="{self._session_id}",response="{response}"'
+
+    async def get_folders(self) -> list[dict[str, Any]]:
+        """Get list of mail folders."""
+        if not self._user_id:
+            await self.authenticate()
+
+        session = await self._ensure_session()
+        auth_header = self._get_session_header()
+
+        try:
+            async with session.get(
+                f"{API_BASE_URL}/{self._user_id}/0/mail/folders",
+                headers=self._get_headers(auth_header),
+            ) as response:
+                if response.status == 200:
+                    text = await response.text()
+                    return self._parse_folders(text)
+                elif response.status == 401:
+                    # Session expired, re-authenticate
+                    await self.authenticate()
+                    return await self.get_folders()
+                else:
+                    raise EboksApiError(f"Failed to get folders", response.status)
+        except aiohttp.ClientError as err:
+            raise EboksApiError(f"Connection error: {err}") from err
+
+    def _parse_folders(self, xml_text: str) -> list[dict[str, Any]]:
+        """Parse folders XML response."""
+        folders = []
+        try:
+            root = ET.fromstring(xml_text)
+            for folder in root.findall(".//eb:FolderInfo", NS):
+                folders.append({
+                    "id": folder.get("id"),
+                    "name": folder.get("name"),
+                    "unread": int(folder.get("unread", 0)),
+                })
+        except ET.ParseError as err:
+            _LOGGER.error("Failed to parse folders XML: %s", err)
+        return folders
+
+    async def get_messages(
+        self, folder_id: str = "0", skip: int = 0, take: int = 100
+    ) -> list[dict[str, Any]]:
+        """Get messages from a folder."""
+        if not self._user_id:
+            await self.authenticate()
+
+        session = await self._ensure_session()
+        auth_header = self._get_session_header()
+
+        try:
+            async with session.get(
+                f"{API_BASE_URL}/{self._user_id}/0/mail/folder/{folder_id}?skip={skip}&take={take}",
+                headers=self._get_headers(auth_header),
+            ) as response:
+                if response.status == 200:
+                    text = await response.text()
+                    return self._parse_messages(text)
+                elif response.status == 401:
+                    await self.authenticate()
+                    return await self.get_messages(folder_id, skip, take)
+                else:
+                    raise EboksApiError(f"Failed to get messages", response.status)
+        except aiohttp.ClientError as err:
+            raise EboksApiError(f"Connection error: {err}") from err
+
+    def _parse_messages(self, xml_text: str) -> list[dict[str, Any]]:
+        """Parse messages XML response."""
+        messages = []
+        try:
+            root = ET.fromstring(xml_text)
+            for msg in root.findall(".//eb:MessageInfo", NS):
+                messages.append({
+                    "id": msg.get("id"),
+                    "subject": msg.get("name", ""),
+                    "sender": msg.get("sender", ""),
+                    "received": msg.get("receivedDateTime"),
+                    "unread": msg.get("unread", "false").lower() == "true",
+                    "format": msg.get("format"),
+                    "folder_id": msg.get("folderId"),
+                })
+        except ET.ParseError as err:
+            _LOGGER.error("Failed to parse messages XML: %s", err)
+        return messages
+
+    async def get_message_content(
+        self, folder_id: str, message_id: str
+    ) -> bytes | None:
+        """Download message content."""
+        if not self._user_id:
+            await self.authenticate()
+
+        session = await self._ensure_session()
+        auth_header = self._get_session_header()
+
+        try:
+            async with session.get(
+                f"{API_BASE_URL}/{self._user_id}/0/mail/folder/{folder_id}/message/{message_id}/content",
+                headers=self._get_headers(auth_header),
+            ) as response:
+                if response.status == 200:
+                    return await response.read()
+                elif response.status == 401:
+                    await self.authenticate()
+                    return await self.get_message_content(folder_id, message_id)
+                else:
+                    raise EboksApiError(f"Failed to get message content", response.status)
+        except aiohttp.ClientError as err:
+            raise EboksApiError(f"Connection error: {err}") from err
+
+    async def get_all_messages(self) -> list[dict[str, Any]]:
+        """Get all messages from all folders."""
+        all_messages = []
+        folders = await self.get_folders()
+
+        for folder in folders:
+            messages = await self.get_messages(folder["id"])
+            for msg in messages:
+                msg["folder_name"] = folder["name"]
+            all_messages.extend(messages)
+
+        # Sort by received date, newest first
+        all_messages.sort(key=lambda x: x.get("received", ""), reverse=True)
+        return all_messages
+
+    async def get_unread_count(self) -> int:
+        """Get total unread message count."""
+        folders = await self.get_folders()
+        return sum(folder.get("unread", 0) for folder in folders)
