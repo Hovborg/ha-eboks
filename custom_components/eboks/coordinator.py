@@ -62,14 +62,15 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("Starting e-Boks data update")
 
             # Fetch data - API methods handle re-authentication on 401
-            folders = await self.api.get_all_folders()
-            _LOGGER.debug("Got %d folders", len(folders))
-
+            # Order matters: get_all_messages and get_unread_count both call get_all_folders internally
             messages = await self.api.get_all_messages()
             _LOGGER.debug("Got %d messages", len(messages))
 
             unread_count = await self.api.get_unread_count()
             _LOGGER.debug("Unread count: %d", unread_count)
+
+            folders = await self.api.get_all_folders()
+            _LOGGER.debug("Got %d folders", len(folders))
 
             # Update timestamps and connection status
             self._last_updated = dt_util.now()
