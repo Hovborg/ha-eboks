@@ -31,7 +31,7 @@ async def async_setup_entry(
 
     async_add_entities([
         EboksMarkAllReadButton(coordinator, api, entry, cpr),
-        EboksRefreshButton(coordinator, api, entry, cpr),
+        EboksRefreshButton(coordinator, entry, cpr),
     ])
 
 
@@ -129,13 +129,11 @@ class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
     def __init__(
         self,
         coordinator: EboksCoordinator,
-        api: EboksApi,
         entry: ConfigEntry,
         cpr: str,
     ) -> None:
         """Initialize the button."""
         super().__init__(coordinator)
-        self._api = api
         self._entry = entry
         self._cpr = cpr
         self._attr_unique_id = f"{entry.entry_id}_refresh"
@@ -154,9 +152,4 @@ class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press - refresh data."""
         _LOGGER.info("Refreshing e-Boks data")
-        try:
-            await self.coordinator.async_request_refresh()
-            _LOGGER.debug("Refresh completed successfully")
-        except Exception as err:
-            _LOGGER.error("Refresh failed: %s", err)
-            raise
+        await self.coordinator.async_request_refresh()
