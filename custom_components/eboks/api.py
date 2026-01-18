@@ -251,16 +251,12 @@ class EboksApi:
                 all_folders.extend(folders)
                 _LOGGER.debug("Got %d folders from mailbox %d", len(folders), mailbox_id)
             except EboksApiError as err:
-                _LOGGER.warning("Failed to get folders from mailbox %d: %s", mailbox_id, err)
-                # Re-authenticate and try once more
-                try:
-                    await self.authenticate()
-                    folders = await self.get_folders(mailbox_id)
-                    all_folders.extend(folders)
-                    _LOGGER.debug("Got %d folders from mailbox %d after re-auth", len(folders), mailbox_id)
-                except Exception as retry_err:
-                    _LOGGER.warning("Retry also failed for mailbox %d: %s", mailbox_id, retry_err)
+                # Just log and continue - don't try to re-authenticate mid-loop
+                _LOGGER.warning("Skipping mailbox %d: %s", mailbox_id, err)
+            except Exception as err:
+                _LOGGER.warning("Unexpected error for mailbox %d: %s", mailbox_id, err)
 
+        _LOGGER.debug("Total folders from all mailboxes: %d", len(all_folders))
         return all_folders
 
     def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
