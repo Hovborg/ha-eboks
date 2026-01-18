@@ -231,15 +231,9 @@ class EboksApi:
 
     async def get_all_folders(self) -> list[dict[str, Any]]:
         """Get folders from all mailboxes (virksomheder + det offentlige)."""
-        all_folders = []
-        # Mailbox 0 = Post fra virksomheder, Mailbox 1 = Post fra det offentlige
-        for mailbox_id in [0, 1]:
-            try:
-                folders = await self.get_folders(mailbox_id)
-                all_folders.extend(folders)
-            except EboksApiError as err:
-                _LOGGER.warning("Failed to get folders from mailbox %d: %s", mailbox_id, err)
-        return all_folders
+        # For now, just get from mailbox 0 to test
+        # TODO: Add mailbox 1 (det offentlige) support later
+        return await self.get_folders(0)
 
     def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
         """Parse folders XML response."""
@@ -358,7 +352,9 @@ class EboksApi:
                     msg["mailbox_id"] = folder.get("mailbox_id", 0)
                 all_messages.extend(messages)
             except EboksApiError as err:
-                _LOGGER.warning("Failed to get messages from folder %s: %s", folder["id"], err)
+                _LOGGER.warning("Failed to get messages from folder %s: %s", folder.get("id"), err)
+            except Exception as err:
+                _LOGGER.error("Unexpected error getting messages from folder %s: %s", folder.get("id"), err)
 
         # Sort by received date, newest first
         all_messages.sort(key=lambda x: x.get("received", ""), reverse=True)
