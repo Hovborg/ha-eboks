@@ -163,6 +163,9 @@ class EboksApi:
                         self._user_id = user_elem.get("userId")
                         _LOGGER.debug("User ID: %s", self._user_id)
 
+                    # Log the full session response for debugging
+                    _LOGGER.info("Full session XML response: %s", text[:500])
+
                     if self._session_id and self._nonce and self._user_id:
                         _LOGGER.debug("Successfully authenticated with e-Boks (session=%s)", self._session_id[:8])
                         return True
@@ -221,6 +224,7 @@ class EboksApi:
 
                 if response.status == 200:
                     text = await response.text()
+                    _LOGGER.info("Raw folders XML from mailbox %d: %s", mailbox_id, text[:500])
                     folders = self._parse_folders(text, mailbox_id)
                     _LOGGER.debug("Got %d folders from mailbox %d", len(folders), mailbox_id)
                     return folders
