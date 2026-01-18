@@ -17,6 +17,15 @@
           "password": "Mobile PIN Code",
           "activation_code": "Activation Code"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure e-Boks",
+        "description": "Update your e-Boks credentials.",
+        "data": {
+          "cpr": "CPR Number",
+          "password": "Mobile PIN Code",
+          "activation_code": "Activation Code"
+        }
       }
     },
     "error": {
@@ -26,7 +35,64 @@
     },
     "abort": {
       "already_configured": "This e-Boks account is already configured",
-      "reauth_successful": "Re-authentication successful"
+      "reauth_successful": "Re-authentication successful",
+      "reconfigure_successful": "Reconfiguration successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "e-Boks Options",
+        "description": "Configure e-Boks integration settings.\n\nScan interval: {min_scan}-{max_scan} minutes\nMessage count: {min_msg}-{max_msg} messages",
+        "data": {
+          "scan_interval": "Scan Interval (minutes)",
+          "message_count": "Number of Message Sensors",
+          "notify_senders": "Important Senders (comma-separated)"
+        },
+        "data_description": {
+          "scan_interval": "How often to check for new messages",
+          "message_count": "Number of individual message sensors to create (Besked 1, Besked 2, etc.)",
+          "notify_senders": "Comma-separated list of sender names that trigger persistent notifications. Default: Skattestyrelsen, Kommune, Sundhed, NemKonto, Udbetaling Danmark"
+        }
+      }
+    }
+  },
+  "services": {
+    "download_message": {
+      "name": "Download Message",
+      "description": "Download an e-Boks message to the specified path.",
+      "fields": {
+        "message_id": {
+          "name": "Message ID",
+          "description": "The ID of the message to download"
+        },
+        "folder_id": {
+          "name": "Folder ID",
+          "description": "The ID of the folder containing the message"
+        },
+        "path": {
+          "name": "Path",
+          "description": "The path where the file will be saved"
+        }
+      }
+    },
+    "mark_as_read": {
+      "name": "Mark as Read",
+      "description": "Mark an e-Boks message as read.",
+      "fields": {
+        "message_id": {
+          "name": "Message ID",
+          "description": "The ID of the message to mark as read"
+        },
+        "folder_id": {
+          "name": "Folder ID",
+          "description": "The ID of the folder containing the message"
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Force refresh e-Boks data."
     }
   }
 }

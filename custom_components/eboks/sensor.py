@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -19,6 +19,8 @@ from .const import (
     ATTR_SUBJECT,
     ATTR_UNREAD,
     CONF_CPR,
+    CONF_MESSAGE_COUNT,
+    DEFAULT_MESSAGE_COUNT,
     DOMAIN,
 )
 from .coordinator import EboksCoordinator
@@ -33,14 +35,23 @@ async def async_setup_entry(
     coordinator: EboksCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     cpr: str = entry.data[CONF_CPR]
 
+    # Get message count from options
+    message_count = entry.options.get(CONF_MESSAGE_COUNT, DEFAULT_MESSAGE_COUNT)
+
     entities: list[SensorEntity] = [
         EboksMessageCountSensor(coordinator, entry, cpr),
         EboksLatestMessageSensor(coordinator, entry, cpr),
+        EboksLastUpdatedSensor(coordinator, entry, cpr),
     ]
 
-    # Add 5 individual message sensors
-    for i in range(1, 6):
+    # Add individual message sensors based on options
+    for i in range(1, message_count + 1):
         entities.append(EboksMessageSensor(coordinator, entry, cpr, i))
+
+    # Add folder sensors
+    if coordinator.data and coordinator.data.get("folders"):
+        for folder in coordinator.data["folders"]:
+            entities.append(EboksFolderSensor(coordinator, entry, cpr, folder))
 
     async_add_entities(entities)
 
@@ -242,4 +253,113 @@ class EboksMessageSensor(EboksBaseSensor):
             "format": msg.get("format"),
             "attachments": msg.get("attachments_count", 0),
             "size_bytes": msg.get("size", 0),
+        }
+
+
+class EboksLastUpdatedSensor(EboksBaseSensor):
+    """Sensor showing when e-Boks was last updated."""
+
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(
+        self,
+        coordinator: EboksCoordinator,
+        entry: ConfigEntry,
+        cpr: str,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, cpr)
+        self._attr_unique_id = f"{entry.entry_id}_last_updated"
+        self._attr_name = "Sidst opdateret"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the last update timestamp."""
+        if self.coordinator.last_updated:
+            return self.coordinator.last_updated.isoformat()
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        if not self.coordinator.data:
+            return {}
+
+        return {
+            "connection_ok": self.coordinator.connection_ok,
+            "update_interval_minutes": self.coordinator.update_interval.total_seconds() / 60
+            if self.coordinator.update_interval
+            else None,
+        }
+
+
+class EboksFolderSensor(EboksBaseSensor):
+    """Sensor for an e-Boks folder."""
+
+    _attr_icon = "mdi:folder-outline"
+    _attr_native_unit_of_measurement = "beskeder"
+
+    def __init__(
+        self,
+        coordinator: EboksCoordinator,
+        entry: ConfigEntry,
+        cpr: str,
+        folder: dict[str, Any],
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, entry, cpr)
+        self._folder_id = folder.get("id", "")
+        self._folder_name = folder.get("name", "Ukendt")
+        self._attr_unique_id = f"{entry.entry_id}_folder_{self._folder_id}"
+        self._attr_name = f"Mappe: {self._folder_name}"
+
+    def _get_folder(self) -> dict[str, Any] | None:
+        """Get the folder data."""
+        if not self.coordinator.data:
+            return None
+        folders: list[dict[str, Any]] = self.coordinator.data.get("folders", [])
+        for folder in folders:
+            if folder.get("id") == self._folder_id:
+                return folder
+        return None
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of unread messages in this folder."""
+        folder = self._get_folder()
+        if folder:
+            return int(folder.get("unread", 0))
+        return 0
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on folder name."""
+        name_lower = self._folder_name.lower()
+        if "indbakke" in name_lower or "inbox" in name_lower:
+            return "mdi:inbox"
+        if "arkiv" in name_lower or "archive" in name_lower:
+            return "mdi:archive"
+        if "papirkurv" in name_lower or "trash" in name_lower:
+            return "mdi:trash-can"
+        if "sendt" in name_lower or "sent" in name_lower:
+            return "mdi:send"
+        return "mdi:folder-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes."""
+        folder = self._get_folder()
+        if not folder:
+            return {"folder_id": self._folder_id}
+
+        # Count messages in this folder
+        messages: list[dict[str, Any]] = self.coordinator.data.get("messages", []) if self.coordinator.data else []
+        folder_messages = [m for m in messages if m.get("folder_id") == self._folder_id]
+
+        return {
+            "folder_id": self._folder_id,
+            "folder_name": self._folder_name,
+            "total_count": folder.get("total", len(folder_messages)),
+            "unread_count": folder.get("unread", 0),
         }
