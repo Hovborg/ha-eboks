@@ -194,6 +194,8 @@ class MitIDAuthenticator:
             "code_challenge": self._code_challenge,
             "code_challenge_method": "S256",
             "idp": "nemloginEboksRealm",  # Required for MitID/NemLog-in
+            "deviceName": "HomeAssistant",
+            "deviceId": self._device_id,
         }
 
         query = urllib.parse.urlencode(params)
@@ -278,7 +280,8 @@ class MitIDAuthenticator:
 
         _LOGGER.debug("Getting user token from digitalpostproxy.e-boks.dk...")
 
-        async with session.get(
+        # Must use POST with Content-Type: application/json
+        async with session.post(
             f"{EBOKS_PROXY_URL}/usertoken",
             headers=headers,
         ) as response:
@@ -315,10 +318,10 @@ class MitIDAuthenticator:
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
+        # Use "usertoken" grant type (not token-exchange)
         data = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "subject_token": user_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "grant_type": "usertoken",
+            "usertoken": user_token,
             "scope": "mobileapi offline_access",
         }
 
