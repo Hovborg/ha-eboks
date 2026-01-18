@@ -186,16 +186,21 @@ class EboksApi:
         response = self._compute_response(self._nonce)
         return f'deviceid="{self._device_id}",nonce="{self._nonce}",sessionid="{self._session_id}",response="{response}"'
 
-    def _update_nonce_from_response(self, response: aiohttp.ClientResponse) -> None:
-        """Update nonce from response header for next request."""
+    def _update_nonce_from_response(self, response: aiohttp.ClientResponse) -> bool:
+        """Update nonce from response header for next request.
+
+        Returns True if nonce was updated, False otherwise.
+        """
         auth_header = response.headers.get("X-EBOKS-AUTHENTICATE", "")
         for part in auth_header.split(","):
             part = part.strip()
             match = re.match(r'nonce="([^"]*)"', part)
             if match:
                 self._nonce = match.group(1)
-                _LOGGER.debug("Updated nonce: %s...", self._nonce[:8])
-                break
+                _LOGGER.debug("Updated nonce: %s...", self._nonce[:8] if self._nonce else "None")
+                return True
+        _LOGGER.debug("No nonce in response (status=%s)", response.status)
+        return False
 
     async def get_folders(self, mailbox_id: int = 0) -> list[dict[str, Any]]:
         """Get list of mail folders from a specific mailbox."""
@@ -206,18 +211,22 @@ class EboksApi:
         auth_header = self._get_session_header()
 
         try:
+            _LOGGER.debug("Fetching folders from mailbox %d", mailbox_id)
             async with session.get(
                 f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folders",
                 headers=self._get_headers(auth_header),
             ) as response:
                 # Always try to update nonce from response
-                self._update_nonce_from_response(response)
+                nonce_updated = self._update_nonce_from_response(response)
 
                 if response.status == 200:
                     text = await response.text()
-                    return self._parse_folders(text, mailbox_id)
+                    folders = self._parse_folders(text, mailbox_id)
+                    _LOGGER.debug("Got %d folders from mailbox %d", len(folders), mailbox_id)
+                    return folders
                 elif response.status == 401:
                     # Session expired, re-authenticate
+                    _LOGGER.debug("Session expired, re-authenticating")
                     await self.authenticate()
                     return await self.get_folders(mailbox_id)
                 elif response.status == 404:
@@ -225,6 +234,7 @@ class EboksApi:
                     _LOGGER.debug("Mailbox %d not found for user", mailbox_id)
                     return []
                 else:
+                    _LOGGER.warning("Failed to get folders from mailbox %d: status %d", mailbox_id, response.status)
                     raise EboksApiError(f"Failed to get folders from mailbox {mailbox_id}", response.status)
         except aiohttp.ClientError as err:
             raise EboksApiError(f"Connection error: {err}") from err
@@ -262,6 +272,7 @@ class EboksApi:
         auth_header = self._get_session_header()
 
         try:
+            _LOGGER.debug("Fetching messages from folder %s (mailbox %d)", folder_id, mailbox_id)
             async with session.get(
                 f"{API_BASE_URL}/{self._user_id}/{mailbox_id}/mail/folder/{folder_id}?skip={skip}&take={take}",
                 headers=self._get_headers(auth_header),
@@ -271,14 +282,19 @@ class EboksApi:
 
                 if response.status == 200:
                     text = await response.text()
-                    return self._parse_messages(text)
+                    messages = self._parse_messages(text)
+                    _LOGGER.debug("Got %d messages from folder %s", len(messages), folder_id)
+                    return messages
                 elif response.status == 401:
+                    _LOGGER.debug("Session expired while getting messages, re-authenticating")
                     await self.authenticate()
                     return await self.get_messages(folder_id, mailbox_id, skip, take)
                 elif response.status == 404:
                     # Folder doesn't exist, return empty
+                    _LOGGER.debug("Folder %s not found", folder_id)
                     return []
                 else:
+                    _LOGGER.warning("Failed to get messages from folder %s: status %d", folder_id, response.status)
                     raise EboksApiError(f"Failed to get messages from folder {folder_id}", response.status)
         except aiohttp.ClientError as err:
             raise EboksApiError(f"Connection error: {err}") from err

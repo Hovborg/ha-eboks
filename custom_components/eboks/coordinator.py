@@ -59,9 +59,13 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from e-Boks API."""
         try:
-            messages = await self.api.get_all_messages()
-            unread_count = await self.api.get_unread_count()
+            _LOGGER.debug("Starting e-Boks data update")
             folders = await self.api.get_all_folders()
+            _LOGGER.debug("Got %d folders", len(folders))
+            messages = await self.api.get_all_messages()
+            _LOGGER.debug("Got %d messages", len(messages))
+            unread_count = await self.api.get_unread_count()
+            _LOGGER.debug("Unread count: %d", unread_count)
 
             # Update timestamps and connection status
             self._last_updated = dt_util.now()
