@@ -1,10 +1,7 @@
 """Binary sensor platform for e-Boks integration."""
 from __future__ import annotations
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-)
+from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -31,7 +28,6 @@ async def async_setup_entry(
 class EboksUnreadSensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor indicating unread messages."""
 
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:email-alert"
     _attr_has_entity_name = True
 
