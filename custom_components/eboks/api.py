@@ -231,7 +231,7 @@ class EboksApi:
                     return await self.get_folders(mailbox_id)
                 elif response.status == 404:
                     # Mailbox doesn't exist for this user, return empty
-                    _LOGGER.debug("Mailbox %d not found for user", mailbox_id)
+                    _LOGGER.warning("Mailbox %d returned 404 - not found for user", mailbox_id)
                     return []
                 else:
                     _LOGGER.warning("Failed to get folders from mailbox %d: status %d", mailbox_id, response.status)
@@ -245,7 +245,9 @@ class EboksApi:
 
         # Mailbox 0: Virksomheder (businesses)
         try:
+            _LOGGER.info("Fetching mailbox 0 (Virksomheder)...")
             folders_0 = await self.get_folders(0)
+            _LOGGER.info("Got %d folders from mailbox 0", len(folders_0))
             for f in folders_0:
                 f["mailbox_name"] = "Virksomheder"
             all_folders.extend(folders_0)
@@ -254,13 +256,16 @@ class EboksApi:
 
         # Mailbox 1: Det offentlige (government)
         try:
+            _LOGGER.info("Fetching mailbox 1 (Det offentlige)...")
             folders_1 = await self.get_folders(1)
+            _LOGGER.info("Got %d folders from mailbox 1", len(folders_1))
             for f in folders_1:
                 f["mailbox_name"] = "Det offentlige"
             all_folders.extend(folders_1)
         except EboksApiError as err:
             _LOGGER.warning("Failed to get folders from mailbox 1: %s", err)
 
+        _LOGGER.info("Total folders from all mailboxes: %d", len(all_folders))
         return all_folders
 
     def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
