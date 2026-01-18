@@ -194,12 +194,17 @@ class EboksMessageSensor(EboksBaseSensor):
         self._attr_name = f"Besked {position}"
 
     def _get_message(self) -> dict[str, Any] | None:
-        """Get the message at this position."""
+        """Get the message at this position from inbox only."""
         if not self.coordinator.data:
             return None
         messages: list[dict[str, Any]] = self.coordinator.data.get("messages", [])
-        if len(messages) >= self._position:
-            return messages[self._position - 1]
+        # Filter to only inbox messages (folder_id "0" or folder_name "Indbakke")
+        inbox_messages = [
+            m for m in messages
+            if m.get("folder_id") == "0" or m.get("folder_name") == "Indbakke"
+        ]
+        if len(inbox_messages) >= self._position:
+            return inbox_messages[self._position - 1]
         return None
 
     @property
