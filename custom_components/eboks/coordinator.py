@@ -61,38 +61,15 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             _LOGGER.debug("Starting e-Boks data update")
 
-            # Always re-authenticate before fetching data to ensure fresh session
-            try:
-                await self.api.authenticate()
-                _LOGGER.debug("Authentication successful")
-            except Exception as err:
-                _LOGGER.error("Authentication failed: %s", err)
-                self._connection_ok = False
-                raise UpdateFailed(f"Authentication failed: {err}") from err
+            # Fetch data - API methods handle re-authentication on 401
+            folders = await self.api.get_all_folders()
+            _LOGGER.debug("Got %d folders", len(folders))
 
-            try:
-                folders = await self.api.get_all_folders()
-                _LOGGER.debug("Got %d folders", len(folders))
-            except Exception as err:
-                _LOGGER.error("Failed to get folders: %s", err)
-                self._connection_ok = False
-                raise UpdateFailed(f"Failed to get folders: {err}") from err
+            messages = await self.api.get_all_messages()
+            _LOGGER.debug("Got %d messages", len(messages))
 
-            try:
-                messages = await self.api.get_all_messages()
-                _LOGGER.debug("Got %d messages", len(messages))
-            except Exception as err:
-                _LOGGER.error("Failed to get messages: %s", err)
-                self._connection_ok = False
-                raise UpdateFailed(f"Failed to get messages: {err}") from err
-
-            try:
-                unread_count = await self.api.get_unread_count()
-                _LOGGER.debug("Unread count: %d", unread_count)
-            except Exception as err:
-                _LOGGER.error("Failed to get unread count: %s", err)
-                self._connection_ok = False
-                raise UpdateFailed(f"Failed to get unread count: {err}") from err
+            unread_count = await self.api.get_unread_count()
+            _LOGGER.debug("Unread count: %d", unread_count)
 
             # Update timestamps and connection status
             self._last_updated = dt_util.now()
