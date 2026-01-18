@@ -29,9 +29,9 @@ async def async_setup_entry(
     api: EboksApi = hass.data[DOMAIN][entry.entry_id]["api"]
     cpr: str = entry.data[CONF_CPR]
 
+    # Note: Refresh button removed in v0.7.0 - use eboks.refresh service instead
     async_add_entities([
         EboksMarkAllReadButton(coordinator, api, entry, cpr),
-        EboksRefreshButton(coordinator, entry, cpr),
     ])
 
 
@@ -120,36 +120,3 @@ class EboksMarkAllReadButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
         await self.coordinator.async_request_refresh()
 
 
-class EboksRefreshButton(CoordinatorEntity[EboksCoordinator], ButtonEntity):
-    """Button to refresh e-Boks data."""
-
-    _attr_icon = "mdi:refresh"
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        coordinator: EboksCoordinator,
-        entry: ConfigEntry,
-        cpr: str,
-    ) -> None:
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self._entry = entry
-        self._cpr = cpr
-        self._attr_unique_id = f"{entry.entry_id}_refresh"
-        self._attr_name = "Opdater"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name=f"e-Boks ({self._cpr[:6]}...)",
-            manufacturer="e-Boks",
-            model="Digital Postkasse",
-        )
-
-    async def async_press(self) -> None:
-        """Handle button press - refresh data."""
-        _LOGGER.info("Refreshing e-Boks data")
-        await self.coordinator.async_request_refresh()
