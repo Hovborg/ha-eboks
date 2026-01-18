@@ -241,9 +241,27 @@ class EboksApi:
 
     async def get_all_folders(self) -> list[dict[str, Any]]:
         """Get folders from all mailboxes (virksomheder + det offentlige)."""
-        # For now, just get from mailbox 0 to test
-        # TODO: Add mailbox 1 (det offentlige) support later
-        return await self.get_folders(0)
+        all_folders = []
+
+        # Mailbox 0 = Post fra virksomheder
+        # Mailbox 1 = Post fra det offentlige
+        for mailbox_id in [0, 1]:
+            try:
+                folders = await self.get_folders(mailbox_id)
+                all_folders.extend(folders)
+                _LOGGER.debug("Got %d folders from mailbox %d", len(folders), mailbox_id)
+            except EboksApiError as err:
+                _LOGGER.warning("Failed to get folders from mailbox %d: %s", mailbox_id, err)
+                # Re-authenticate and try once more
+                try:
+                    await self.authenticate()
+                    folders = await self.get_folders(mailbox_id)
+                    all_folders.extend(folders)
+                    _LOGGER.debug("Got %d folders from mailbox %d after re-auth", len(folders), mailbox_id)
+                except Exception as retry_err:
+                    _LOGGER.warning("Retry also failed for mailbox %d: %s", mailbox_id, retry_err)
+
+        return all_folders
 
     def _parse_folders(self, xml_text: str, mailbox_id: int = 0) -> list[dict[str, Any]]:
         """Parse folders XML response."""
