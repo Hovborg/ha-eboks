@@ -60,7 +60,15 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch data from e-Boks API."""
         try:
             _LOGGER.debug("Starting e-Boks data update")
-            folders = await self.api.get_all_folders()
+
+            # Try to fetch data, re-authenticate if needed
+            try:
+                folders = await self.api.get_all_folders()
+            except EboksApiError as err:
+                _LOGGER.warning("API error getting folders, re-authenticating: %s", err)
+                await self.api.authenticate()
+                folders = await self.api.get_all_folders()
+
             _LOGGER.debug("Got %d folders", len(folders))
             messages = await self.api.get_all_messages()
             _LOGGER.debug("Got %d messages", len(messages))
