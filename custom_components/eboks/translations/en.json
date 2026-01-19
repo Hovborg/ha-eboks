@@ -25,16 +25,17 @@
       },
       "mitid_credentials": {
         "title": "e-Boks - MitID Login",
-        "description": "You will now be redirected to MitID to log in."
+        "description": "Click the button below to log in with MitID.\n\nAfter login, the browser will show an error (cannot open eboksdk://). Copy the entire URL and paste it on the page that opens.",
+        "submit": "Log in with MitID"
       },
-      "mitid_authorize": {
-        "title": "e-Boks - MitID Authorization",
-        "description": "1. Open this link in your browser:\n\n{auth_url}\n\n2. Log in with MitID\n\n3. When browser shows 'cannot open eboksdk://...' - copy the code from URL (after code= and before &)\n\n4. Enter the code below",
+      "mitid_manual": {
+        "title": "e-Boks - MitID Token (Manual)",
+        "description": "Enter your e-Boks refresh token manually.\n\nTo get a token, run: python3 tools/get_eboks_token.py\n\nOr see the guide: https://github.com/Hovborg/ha-eboks#getting-refresh-token",
         "data": {
-          "authorization_code": "Authorization code"
+          "refresh_token": "Refresh Token"
         },
         "data_description": {
-          "authorization_code": "The code from the callback URL (after 'code=' and before '&')"
+          "refresh_token": "e-Boks refresh token from MitID login"
         }
       },
       "reauth_confirm": {
@@ -64,7 +65,8 @@
     "abort": {
       "already_configured": "This e-Boks account is already configured",
       "reauth_successful": "Re-authentication successful",
-      "reconfigure_successful": "Reconfiguration successful"
+      "reconfigure_successful": "Reconfiguration successful",
+      "mitid_auth_failed": "MitID login failed. Please try again."
     }
   },
   "options": {

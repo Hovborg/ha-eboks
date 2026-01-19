@@ -25,16 +25,17 @@
       },
       "mitid_credentials": {
         "title": "e-Boks - MitID Login",
-        "description": "Du vil nu blive sendt til MitID for at logge ind."
+        "description": "Klik på knappen nedenfor for at logge ind med MitID.\n\nEfter login vil browseren vise en fejl (kan ikke åbne eboksdk://). Kopiér hele URL'en og indsæt den på siden der åbnes.",
+        "submit": "Log ind med MitID"
       },
-      "mitid_authorize": {
-        "title": "e-Boks - MitID Godkendelse",
-        "description": "1. Åbn dette link i din browser:\n\n{auth_url}\n\n2. Log ind med MitID\n\n3. Når browseren viser 'kan ikke åbne eboksdk://...' - kopier koden fra URL'en (efter code= og før &)\n\n4. Indsæt koden nedenfor",
+      "mitid_manual": {
+        "title": "e-Boks - MitID Token (Manuel)",
+        "description": "Indtast dit e-Boks refresh token manuelt.\n\nFor at få et token, kør: python3 tools/get_eboks_token.py\n\nEller se guiden: https://github.com/Hovborg/ha-eboks#getting-refresh-token",
         "data": {
-          "authorization_code": "Autoriserings kode"
+          "refresh_token": "Refresh Token"
         },
         "data_description": {
-          "authorization_code": "Koden fra callback URL'en (efter 'code=' og før '&')"
+          "refresh_token": "e-Boks refresh token fra MitID login"
         }
       },
       "reauth_confirm": {
@@ -64,7 +65,8 @@
     "abort": {
       "already_configured": "Denne e-Boks konto er allerede konfigureret",
       "reauth_successful": "Genautentificering lykkedes",
-      "reconfigure_successful": "Genkonfigurering lykkedes"
+      "reconfigure_successful": "Genkonfigurering lykkedes",
+      "mitid_auth_failed": "MitID login fejlede. Prøv igen."
     }
   },
   "options": {
@@ -80,9 +82,47 @@
         "data_description": {
           "scan_interval": "Hvor ofte der tjekkes for nye beskeder",
           "message_count": "Antal individuelle besked-sensorer (Besked 1, Besked 2, osv.)",
-          "notify_senders": "Kommasepareret liste over afsendere der giver notifikationer"
+          "notify_senders": "Kommasepareret liste over afsendere der giver notifikationer. Standard: Skattestyrelsen, Kommune, Sundhed, NemKonto, Udbetaling Danmark"
         }
       }
+    }
+  },
+  "services": {
+    "download_message": {
+      "name": "Download Besked",
+      "description": "Download en e-Boks besked til den angivne sti.",
+      "fields": {
+        "message_id": {
+          "name": "Besked ID",
+          "description": "ID'et på beskeden der skal downloades"
+        },
+        "folder_id": {
+          "name": "Mappe ID",
+          "description": "ID'et på mappen der indeholder beskeden"
+        },
+        "path": {
+          "name": "Sti",
+          "description": "Stien hvor filen skal gemmes"
+        }
+      }
+    },
+    "mark_as_read": {
+      "name": "Markér som Læst",
+      "description": "Markér en e-Boks besked som læst.",
+      "fields": {
+        "message_id": {
+          "name": "Besked ID",
+          "description": "ID'et på beskeden der skal markeres som læst"
+        },
+        "folder_id": {
+          "name": "Mappe ID",
+          "description": "ID'et på mappen der indeholder beskeden"
+        }
+      }
+    },
+    "refresh": {
+      "name": "Opdater",
+      "description": "Tving opdatering af e-Boks data."
     }
   }
 }

@@ -475,24 +475,27 @@ class MitIDAuthenticator:
             return result
 
     async def complete_authentication(
-        self, authorization_code: str
+        self, authorization_code: str, register_rsa_device: bool = True
     ) -> MitIDCredentials:
         """Complete the full MitID authentication flow.
 
-        This performs the 3-step token exchange:
+        This performs the token exchange and optionally registers RSA device:
         1. Exchange authorization code at digitalpost.dk
         2. Get userToken from digitalpostproxy.e-boks.dk
         3. Get e-Boks access token from oauth-dk.e-boks.com
+        4. Get user profile
+        5. (Optional) Register RSA device for full mailbox access
 
         Args:
             authorization_code: Code received from MitID callback
+            register_rsa_device: Whether to register RSA device (required for full access)
 
         Returns:
             MitIDCredentials with all necessary authentication data
         """
         try:
             # Step 1: Exchange code for DigitalPost tokens
-            _LOGGER.info("Step 1/4: Exchanging authorization code...")
+            _LOGGER.info("Step 1/5: Exchanging authorization code...")
             token_response = await self.exchange_code_for_tokens(authorization_code)
             bearer_token = token_response.get("access_token")
 
@@ -500,7 +503,7 @@ class MitIDAuthenticator:
                 raise Exception("No access_token in DigitalPost response")
 
             # Step 2: Get user token from e-Boks proxy
-            _LOGGER.info("Step 2/4: Getting user token from e-Boks proxy...")
+            _LOGGER.info("Step 2/5: Getting user token from e-Boks proxy...")
             user_token_response = await self.get_user_token(bearer_token)
             user_token = user_token_response.get("userToken")
 
@@ -508,7 +511,7 @@ class MitIDAuthenticator:
                 raise Exception("No userToken in proxy response")
 
             # Step 3: Get e-Boks access token
-            _LOGGER.info("Step 3/4: Getting e-Boks access token...")
+            _LOGGER.info("Step 3/5: Getting e-Boks access token...")
             eboks_token_response = await self.get_eboks_access_token(user_token)
             access_token = eboks_token_response.get("access_token")
             refresh_token = eboks_token_response.get("refresh_token")
@@ -517,15 +520,28 @@ class MitIDAuthenticator:
                 raise Exception("No access_token in e-Boks response")
 
             # Step 4: Get user profile
-            _LOGGER.info("Step 4/4: Getting user profile...")
+            _LOGGER.info("Step 4/5: Getting user profile...")
             profile = await self.get_user_profile(access_token)
+
+            # Step 5: Register RSA device for full mailbox access
+            private_key_pem = ""
+            if register_rsa_device:
+                _LOGGER.info("Step 5/5: Registering RSA device for full mailbox access...")
+                try:
+                    await self.register_device(access_token)
+                    private_key_pem = self._private_key_pem or ""
+                    _LOGGER.info("RSA device registered successfully")
+                except Exception as e:
+                    _LOGGER.warning("RSA device registration failed (continuing without): %s", e)
+            else:
+                _LOGGER.info("Step 5/5: Skipping RSA device registration")
 
             _LOGGER.info("MitID authentication completed successfully for: %s", profile.get("name", "Unknown"))
 
             return MitIDCredentials(
                 user_id=str(profile.get("id", "")),
                 name=profile.get("name", ""),
-                private_key_pem="",  # Not used for MitID auth
+                private_key_pem=private_key_pem,
                 device_id=self._device_id,
                 access_token=access_token,
                 refresh_token=refresh_token,

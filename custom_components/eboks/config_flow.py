@@ -1,6 +1,7 @@
 """Config flow for e-Boks integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -12,8 +13,10 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.network import get_url
 
 from .api import EboksApi, EboksApiError, EboksAuthError
+from .auth_callback import PENDING_AUTH_FLOWS, async_register_views
 from .const import (
     AUTH_TYPE_ACTIVATION_CODE,
     AUTH_TYPE_MITID,
@@ -189,108 +192,155 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_mitid_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle MitID authentication - show authorization URL."""
-        # Store PKCE values in hass.data using flow_id as key
-        # This is the only reliable way to persist data across HTTP requests
-        from .mitid_auth import generate_pkce_pair
-        import secrets
-        import uuid
+        """Handle MitID authentication - start external auth flow."""
+        from .mitid_auth import MitIDAuthenticator
 
-        # Generate PKCE values
-        code_verifier, code_challenge = generate_pkce_pair()
-        device_id = str(uuid.uuid4()).upper()
-        state = secrets.token_urlsafe(32)
-        nonce = secrets.token_urlsafe(16)
+        # Register HTTP views if not already done
+        async_register_views(self.hass)
 
-        # Store in hass.data with flow_id as key
-        pkce_key = f"eboks_pkce_{self.flow_id}"
-        self.hass.data[pkce_key] = {
-            "code_verifier": code_verifier,
-            "code_challenge": code_challenge,
-            "state": state,
-            "nonce": nonce,
-            "device_id": device_id,
+        # Create authenticator and store PKCE values
+        if self._mitid_authenticator is None:
+            self._mitid_authenticator = MitIDAuthenticator()
+
+        # Get auth URL
+        auth_url = self._mitid_authenticator.get_authorization_url()
+
+        # Get Home Assistant base URL for callback
+        try:
+            ha_url = get_url(self.hass, prefer_external=True)
+        except Exception:
+            ha_url = get_url(self.hass)
+
+        callback_url = f"{ha_url}/api/eboks/callback?flow_id={self.flow_id}"
+
+        # Store flow data for callback
+        PENDING_AUTH_FLOWS[self.flow_id] = {
+            "auth_url": auth_url,
+            "code_verifier": self._mitid_authenticator.code_verifier,
+            "state": self._mitid_authenticator.state,
+            "code": None,
         }
-        _LOGGER.info("Stored PKCE data with key: %s", pkce_key)
 
-        return await self.async_step_mitid_authorize()
+        _LOGGER.info("Starting MitID auth flow %s, callback: %s", self.flow_id, callback_url)
 
-    async def async_step_mitid_authorize(
+        # Show external step - opens callback page
+        return self.async_external_step(
+            step_id="mitid_credentials",
+            url=callback_url,
+        )
+
+    async def async_step_mitid_callback(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle MitID authorization step."""
-        from .mitid_auth import MitIDAuthenticator, generate_pkce_pair
-        from .mitid_auth import DIGITALPOST_AUTH_URL, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_SCOPE
-        import secrets
-        import uuid
-        import urllib.parse
-
+        """Handle callback from MitID external step."""
         errors: dict[str, str] = {}
-        pkce_key = f"eboks_pkce_{self.flow_id}"
 
-        # Check if we have PKCE values stored
-        if pkce_key not in self.hass.data:
-            _LOGGER.warning("PKCE data not found, generating new values")
-            code_verifier, code_challenge = generate_pkce_pair()
-            device_id = str(uuid.uuid4()).upper()
-            state = secrets.token_urlsafe(32)
-            nonce = secrets.token_urlsafe(16)
+        # Check if we have the authorization code
+        flow_data = PENDING_AUTH_FLOWS.get(self.flow_id, {})
+        authorization_code = flow_data.get("code")
+        code_verifier = flow_data.get("code_verifier")
 
-            self.hass.data[pkce_key] = {
-                "code_verifier": code_verifier,
-                "code_challenge": code_challenge,
-                "state": state,
-                "nonce": nonce,
-                "device_id": device_id,
-            }
+        if not authorization_code:
+            # Wait a bit and check again (polling)
+            for _ in range(30):  # Wait up to 30 seconds
+                await asyncio.sleep(1)
+                flow_data = PENDING_AUTH_FLOWS.get(self.flow_id, {})
+                authorization_code = flow_data.get("code")
+                if authorization_code:
+                    break
 
-        pkce_data = self.hass.data[pkce_key]
+        if not authorization_code:
+            _LOGGER.error("No authorization code received for flow %s", self.flow_id)
+            # Clean up
+            PENDING_AUTH_FLOWS.pop(self.flow_id, None)
+            errors["base"] = "mitid_auth_failed"
+            return self.async_abort(reason="mitid_auth_failed")
+
+        try:
+            from .mitid_auth import MitIDAuthenticator
+
+            # Create new authenticator with stored code_verifier
+            auth = MitIDAuthenticator()
+            auth._code_verifier = code_verifier
+
+            # Complete the authentication flow
+            credentials = await auth.complete_authentication(authorization_code)
+
+            # Store credentials (including RSA private key for full mailbox access)
+            self._data[CONF_ACCESS_TOKEN] = credentials.access_token
+            self._data[CONF_REFRESH_TOKEN] = credentials.refresh_token
+            self._data[CONF_USER_ID] = credentials.user_id
+            self._data[CONF_DEVICE_ID] = credentials.device_id
+            self._data[CONF_AUTH_TYPE] = AUTH_TYPE_MITID
+            if credentials.private_key_pem:
+                self._data[CONF_PRIVATE_KEY] = credentials.private_key_pem
+                _LOGGER.info("RSA private key stored for full mailbox access")
+
+            await auth.close()
+
+            # Clean up pending flow
+            PENDING_AUTH_FLOWS.pop(self.flow_id, None)
+
+            # Validate that we can connect
+            info = await validate_mitid_input(self.hass, self._data)
+
+            # Use user_id as unique ID
+            await self.async_set_unique_id(f"mitid_{credentials.user_id}")
+            self._abort_if_unique_id_configured()
+
+            return self.async_create_entry(title=info["title"], data=self._data)
+
+        except Exception as err:
+            _LOGGER.exception("MitID authentication failed: %s", err)
+            PENDING_AUTH_FLOWS.pop(self.flow_id, None)
+            return self.async_abort(reason="mitid_auth_failed")
+
+    async def async_step_mitid_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle MitID authentication - manual refresh token entry (fallback)."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            authorization_code = user_input.get("authorization_code", "").strip()
-
-            # Extract code from URL if user pasted the full redirect URL
-            if "code=" in authorization_code:
-                try:
-                    if "://" in authorization_code:
-                        parsed = urllib.parse.urlparse(authorization_code)
-                        params = urllib.parse.parse_qs(parsed.query)
-                    else:
-                        params = urllib.parse.parse_qs(authorization_code)
-                    if "code" in params:
-                        authorization_code = params["code"][0]
-                        _LOGGER.info("Extracted authorization code from URL")
-                except Exception as e:
-                    _LOGGER.warning("Failed to parse URL, using as-is: %s", e)
+            refresh_token = user_input.get(CONF_REFRESH_TOKEN, "").strip()
 
             try:
-                # Create authenticator with stored PKCE values
+                # Use refresh token to get access token
+                from .mitid_auth import MitIDAuthenticator
+
                 auth = MitIDAuthenticator()
-                auth._code_verifier = pkce_data["code_verifier"]
-                auth._state = pkce_data["state"]
-                auth._device_id = pkce_data["device_id"]
+                token_response = await auth.refresh_eboks_token(refresh_token)
 
-                _LOGGER.info("Using code_verifier: %s...", pkce_data["code_verifier"][:20])
-                _LOGGER.info("Using device_id: %s", pkce_data["device_id"])
+                access_token = token_response.get("access_token")
+                new_refresh_token = token_response.get("refresh_token", refresh_token)
 
-                # Complete the MitID authentication
-                credentials = await auth.complete_authentication(authorization_code)
+                if not access_token:
+                    raise Exception("Could not get access token from refresh token")
 
-                # Clean up PKCE data
-                self.hass.data.pop(pkce_key, None)
+                # Extract user_id from JWT
+                import base64
+                import json
+                payload_b64 = access_token.split('.')[1]
+                padding = 4 - len(payload_b64) % 4
+                if padding != 4:
+                    payload_b64 += '=' * padding
+                payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                user_id = payload.get("sub", "unknown")
 
-                # Store credentials in _data for entry creation
-                self._data[CONF_ACCESS_TOKEN] = credentials.access_token
-                self._data[CONF_REFRESH_TOKEN] = credentials.refresh_token
-                self._data[CONF_USER_ID] = credentials.user_id
-                self._data[CONF_DEVICE_ID] = credentials.device_id
+                # Store credentials
+                self._data[CONF_ACCESS_TOKEN] = access_token
+                self._data[CONF_REFRESH_TOKEN] = new_refresh_token
+                self._data[CONF_USER_ID] = user_id
+                self._data[CONF_DEVICE_ID] = "HomeAssistant"
                 self._data[CONF_AUTH_TYPE] = AUTH_TYPE_MITID
+
+                await auth.close()
 
                 # Validate that we can connect
                 info = await validate_mitid_input(self.hass, self._data)
 
                 # Use user_id as unique ID
-                await self.async_set_unique_id(f"mitid_{credentials.user_id}")
+                await self.async_set_unique_id(f"mitid_{user_id}")
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(title=info["title"], data=self._data)
@@ -298,43 +348,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception as err:
                 _LOGGER.exception("MitID authentication failed: %s", err)
                 errors["base"] = "mitid_auth_failed"
-                # Generate NEW PKCE values for fresh auth URL
-                code_verifier, code_challenge = generate_pkce_pair()
-                device_id = str(uuid.uuid4()).upper()
-                state = secrets.token_urlsafe(32)
-                nonce = secrets.token_urlsafe(16)
 
-                self.hass.data[pkce_key] = {
-                    "code_verifier": code_verifier,
-                    "code_challenge": code_challenge,
-                    "state": state,
-                    "nonce": nonce,
-                    "device_id": device_id,
-                }
-                pkce_data = self.hass.data[pkce_key]
-
-        # Build the authorization URL with stored PKCE values
-        params = {
-            "client_id": OAUTH_CLIENT_ID,
-            "redirect_uri": OAUTH_REDIRECT_URI,
-            "response_type": "code",
-            "scope": OAUTH_SCOPE,
-            "state": pkce_data["state"],
-            "nonce": pkce_data["nonce"],
-            "code_challenge": pkce_data["code_challenge"],
-            "code_challenge_method": "S256",
-            "idp": "nemloginEboksRealm",
-            "deviceName": "HomeAssistant",
-            "deviceId": pkce_data["device_id"],
-        }
-        auth_url = f"{DIGITALPOST_AUTH_URL}?{urllib.parse.urlencode(params)}"
-
+        # Show form for refresh token input
         return self.async_show_form(
-            step_id="mitid_authorize",
-            data_schema=STEP_MITID_AUTH_CODE_SCHEMA,
+            step_id="mitid_manual",
+            data_schema=vol.Schema({
+                vol.Required(CONF_REFRESH_TOKEN): str,
+            }),
             errors=errors,
             description_placeholders={
-                "auth_url": auth_url,
+                "token_guide": "https://github.com/Hovborg/ha-eboks#getting-refresh-token",
             },
         )
 

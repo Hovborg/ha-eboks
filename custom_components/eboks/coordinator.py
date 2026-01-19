@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import EboksApi, EboksApiError, EboksAuthError
 from .const import DEFAULT_NOTIFY_SENDERS, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .mobile_api import EboksMobileApi, EboksMobileApiError, EboksMobileAuthError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
         self,
         hass: HomeAssistant,
-        api: EboksApi,
+        api: EboksApi | EboksMobileApi,
         scan_interval: timedelta | None = None,
         notify_senders: list[str] | None = None,
     ) -> None:
@@ -139,10 +140,10 @@ class EboksCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             return data
 
-        except EboksAuthError as err:
+        except (EboksAuthError, EboksMobileAuthError) as err:
             self._connection_ok = False
             raise ConfigEntryAuthFailed from err
-        except EboksApiError as err:
+        except (EboksApiError, EboksMobileApiError) as err:
             self._connection_ok = False
             raise UpdateFailed(f"Error communicating with e-Boks: {err}") from err
 

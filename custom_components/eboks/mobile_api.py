@@ -324,6 +324,14 @@ class EboksMobileApi:
         folders = await self.get_folders()
         return sum(folder.get("unreadCount", 0) for folder in folders)
 
+    async def get_all_folders(self) -> list[dict[str, Any]]:
+        """Get all folders (alias for get_folders for API compatibility).
+
+        Returns:
+            List of folder dicts
+        """
+        return await self.get_folders()
+
     def normalize_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         """Normalize a message to a consistent format.
 

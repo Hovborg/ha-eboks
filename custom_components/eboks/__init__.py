@@ -14,6 +14,7 @@ from .api import EboksApi
 from .const import (
     AUTH_TYPE_ACTIVATION_CODE,
     AUTH_TYPE_MITID,
+    CONF_ACCESS_TOKEN,
     CONF_ACTIVATION_CODE,
     CONF_AUTH_TYPE,
     CONF_CPR,
@@ -21,12 +22,14 @@ from .const import (
     CONF_MESSAGE_COUNT,
     CONF_NOTIFY_SENDERS,
     CONF_PRIVATE_KEY,
+    CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     DEFAULT_MESSAGE_COUNT,
     DEFAULT_NOTIFY_SENDERS,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
+from .mobile_api import EboksMobileApi
 from .coordinator import EboksCoordinator, EVENT_NEW_MESSAGE, EVENT_UNREAD_CHANGED
 from .services import async_setup_services, async_unload_services
 
@@ -80,17 +83,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     auth_type = entry.data.get(CONF_AUTH_TYPE, AUTH_TYPE_ACTIVATION_CODE)
 
     if auth_type == AUTH_TYPE_MITID:
-        # MitID RSA authentication
-        api = EboksApi(
-            cpr=entry.data[CONF_CPR],
-            password=entry.data[CONF_PASSWORD],
-            device_id=entry.data.get(CONF_DEVICE_ID),
-            private_key_pem=entry.data.get(CONF_PRIVATE_KEY),
+        # MitID authentication uses Mobile JSON API
+        api = EboksMobileApi(
+            access_token=entry.data.get(CONF_ACCESS_TOKEN, ""),
+            refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
             session=session,
         )
-        _LOGGER.info("Using MitID RSA authentication for e-Boks")
+        _LOGGER.info("Using MitID authentication with Mobile JSON API for e-Boks")
     else:
-        # Activation code authentication (default)
+        # Activation code authentication uses XML API (default)
         api = EboksApi(
             cpr=entry.data[CONF_CPR],
             password=entry.data[CONF_PASSWORD],
@@ -98,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             activation_code=entry.data.get(CONF_ACTIVATION_CODE),
             session=session,
         )
-        _LOGGER.info("Using activation code authentication for e-Boks")
+        _LOGGER.info("Using activation code authentication with XML API for e-Boks")
 
     # Get options
     options = get_options(entry)
