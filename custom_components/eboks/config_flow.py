@@ -190,23 +190,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle MitID authentication - show authorization URL."""
-        # Initialize MitID authenticator and store PKCE values in _data
-        # (config flow is stateless, so we must persist these values)
-        from .mitid_auth import MitIDAuthenticator, generate_pkce_pair
+        # Initialize MitID authenticator and store PKCE values in context
+        # (self.context persists across flow steps, unlike self._data)
+        from .mitid_auth import generate_pkce_pair
         import secrets
         import uuid
 
-        # Generate PKCE values and store them
+        # Generate PKCE values and store them in context
         code_verifier, code_challenge = generate_pkce_pair()
         device_id = str(uuid.uuid4()).upper()
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(16)
 
-        self._data["_code_verifier"] = code_verifier
-        self._data["_code_challenge"] = code_challenge
-        self._data["_state"] = state
-        self._data["_nonce"] = nonce
-        self._data[CONF_DEVICE_ID] = device_id
+        self.context["_code_verifier"] = code_verifier
+        self.context["_code_challenge"] = code_challenge
+        self.context["_state"] = state
+        self.context["_nonce"] = nonce
+        self.context["_device_id"] = device_id
 
         return await self.async_step_mitid_authorize()
 
@@ -215,39 +215,37 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle MitID authorization step."""
         from .mitid_auth import MitIDAuthenticator, generate_pkce_pair
+        from .mitid_auth import DIGITALPOST_AUTH_URL, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_SCOPE
         import secrets
         import uuid
         import urllib.parse
 
         errors: dict[str, str] = {}
 
-        # Check if we have PKCE values stored (they might be lost after HA restart)
-        if "_code_verifier" not in self._data:
+        # Check if we have PKCE values stored in context
+        if "_code_verifier" not in self.context:
             # Generate new PKCE values
             code_verifier, code_challenge = generate_pkce_pair()
             device_id = str(uuid.uuid4()).upper()
             state = secrets.token_urlsafe(32)
             nonce = secrets.token_urlsafe(16)
 
-            self._data["_code_verifier"] = code_verifier
-            self._data["_code_challenge"] = code_challenge
-            self._data["_state"] = state
-            self._data["_nonce"] = nonce
-            self._data[CONF_DEVICE_ID] = device_id
+            self.context["_code_verifier"] = code_verifier
+            self.context["_code_challenge"] = code_challenge
+            self.context["_state"] = state
+            self.context["_nonce"] = nonce
+            self.context["_device_id"] = device_id
 
         if user_input is not None:
             authorization_code = user_input.get("authorization_code", "").strip()
 
             # Extract code from URL if user pasted the full redirect URL
-            # URL format: eboksdk://ngdpoidc/callback?code=XXXXX&state=...
             if "code=" in authorization_code:
                 try:
-                    # Handle both URL formats
                     if "://" in authorization_code:
                         parsed = urllib.parse.urlparse(authorization_code)
                         params = urllib.parse.parse_qs(parsed.query)
                     else:
-                        # Just query string
                         params = urllib.parse.parse_qs(authorization_code)
                     if "code" in params:
                         authorization_code = params["code"][0]
@@ -256,26 +254,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.warning("Failed to parse URL, using as-is: %s", e)
 
             try:
-                # Create authenticator with stored PKCE values
+                # Create authenticator with stored PKCE values from context
                 auth = MitIDAuthenticator()
-                # Override with our stored values
-                auth._code_verifier = self._data["_code_verifier"]
-                auth._state = self._data["_state"]
-                auth._device_id = self._data[CONF_DEVICE_ID]
+                auth._code_verifier = self.context["_code_verifier"]
+                auth._state = self.context["_state"]
+                auth._device_id = self.context["_device_id"]
+
+                _LOGGER.info("Using code_verifier: %s...", self.context["_code_verifier"][:20])
+                _LOGGER.info("Using device_id: %s", self.context["_device_id"])
 
                 # Complete the MitID authentication
                 credentials = await auth.complete_authentication(authorization_code)
 
-                # Store credentials
+                # Store credentials in _data for entry creation
                 self._data[CONF_ACCESS_TOKEN] = credentials.access_token
                 self._data[CONF_REFRESH_TOKEN] = credentials.refresh_token
                 self._data[CONF_USER_ID] = credentials.user_id
                 self._data[CONF_DEVICE_ID] = credentials.device_id
                 self._data[CONF_AUTH_TYPE] = AUTH_TYPE_MITID
-
-                # Clean up temporary PKCE data
-                for key in ["_code_verifier", "_code_challenge", "_state", "_nonce"]:
-                    self._data.pop(key, None)
 
                 # Validate that we can connect
                 info = await validate_mitid_input(self.hass, self._data)
@@ -290,33 +286,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("MitID authentication failed: %s", err)
                 errors["base"] = "mitid_auth_failed"
                 # Generate NEW PKCE values for fresh auth URL
-                # (old code is consumed)
                 code_verifier, code_challenge = generate_pkce_pair()
                 device_id = str(uuid.uuid4()).upper()
                 state = secrets.token_urlsafe(32)
                 nonce = secrets.token_urlsafe(16)
 
-                self._data["_code_verifier"] = code_verifier
-                self._data["_code_challenge"] = code_challenge
-                self._data["_state"] = state
-                self._data["_nonce"] = nonce
-                self._data[CONF_DEVICE_ID] = device_id
+                self.context["_code_verifier"] = code_verifier
+                self.context["_code_challenge"] = code_challenge
+                self.context["_state"] = state
+                self.context["_nonce"] = nonce
+                self.context["_device_id"] = device_id
 
-        # Build the authorization URL with stored PKCE values
-        from .mitid_auth import DIGITALPOST_AUTH_URL, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_SCOPE
-
+        # Build the authorization URL with stored PKCE values from context
         params = {
             "client_id": OAUTH_CLIENT_ID,
             "redirect_uri": OAUTH_REDIRECT_URI,
             "response_type": "code",
             "scope": OAUTH_SCOPE,
-            "state": self._data["_state"],
-            "nonce": self._data["_nonce"],
-            "code_challenge": self._data["_code_challenge"],
+            "state": self.context["_state"],
+            "nonce": self.context["_nonce"],
+            "code_challenge": self.context["_code_challenge"],
             "code_challenge_method": "S256",
             "idp": "nemloginEboksRealm",
             "deviceName": "HomeAssistant",
-            "deviceId": self._data[CONF_DEVICE_ID],
+            "deviceId": self.context["_device_id"],
         }
         auth_url = f"{DIGITALPOST_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
