@@ -389,11 +389,14 @@ class MitIDAuthenticator:
     async def get_user_profile(self, access_token: str) -> dict[str, Any]:
         """Get user profile from e-Boks.
 
+        Note: The /1/profile endpoint often returns 404, so we fall back to
+        extracting user info from the access token JWT or returning defaults.
+
         Args:
             access_token: e-Boks access token
 
         Returns:
-            User profile
+            User profile dict with at least id and name fields
         """
         session = await self._ensure_session()
 
@@ -401,16 +404,33 @@ class MitIDAuthenticator:
             "Authorization": f"Bearer {access_token}",
         }
 
+        # Try profile endpoint first
         async with session.get(
             f"{EBOKS_MOBILE_API}/1/profile",
             headers=headers,
         ) as response:
-            if response.status != 200:
-                error = await response.text()
-                _LOGGER.error("Profile request failed: %s", error)
-                raise Exception(f"Profile request failed: {error}")
+            if response.status == 200:
+                return await response.json()
+            _LOGGER.warning("Profile endpoint returned %d, using JWT fallback", response.status)
 
-            return await response.json()
+        # Fallback: extract user info from JWT access token
+        try:
+            import base64
+            import json
+            # JWT format: header.payload.signature
+            payload_b64 = access_token.split('.')[1]
+            # Add padding if needed
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += '=' * padding
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            user_id = payload.get("sub", "")
+            _LOGGER.info("Extracted user_id from JWT: %s", user_id)
+            return {"id": user_id, "name": f"e-Boks User {user_id}"}
+        except Exception as e:
+            _LOGGER.warning("Could not extract user info from JWT: %s", e)
+            # Return minimal profile
+            return {"id": "unknown", "name": "e-Boks User"}
 
     async def refresh_eboks_token(self, refresh_token: str) -> dict[str, Any]:
         """Refresh e-Boks access token.

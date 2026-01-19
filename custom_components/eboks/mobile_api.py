@@ -116,8 +116,11 @@ class EboksMobileApi:
     async def get_profile(self) -> dict[str, Any]:
         """Get user profile information.
 
+        Note: The /1/profile endpoint often returns 404, so we fall back to
+        extracting user info from the access token JWT.
+
         Returns:
-            User profile with id, name, identity, etc.
+            User profile with id, name, etc.
         """
         session = await self._ensure_session()
 
@@ -129,11 +132,25 @@ class EboksMobileApi:
                 if await self.refresh_access_token():
                     return await self.get_profile()
                 raise EboksMobileAuthError("Authentication failed", response.status)
-            if response.status != 200:
-                error = await response.text()
-                raise EboksMobileApiError(f"Profile request failed: {error}", response.status)
+            if response.status == 200:
+                return await response.json()
+            _LOGGER.warning("Profile endpoint returned %d, using JWT fallback", response.status)
 
-            return await response.json()
+        # Fallback: extract user info from JWT access token
+        try:
+            import base64
+            import json
+            payload_b64 = self._access_token.split('.')[1]
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += '=' * padding
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+            user_id = payload.get("sub", "")
+            _LOGGER.info("Extracted user_id from JWT: %s", user_id)
+            return {"id": user_id, "name": f"e-Boks User {user_id}"}
+        except Exception as e:
+            _LOGGER.warning("Could not extract user info from JWT: %s", e)
+            return {"id": "unknown", "name": "e-Boks User"}
 
     async def get_folders(self) -> list[dict[str, Any]]:
         """Get list of mail folders.
