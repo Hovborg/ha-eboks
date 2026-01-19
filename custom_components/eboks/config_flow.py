@@ -190,11 +190,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle MitID authentication - show authorization URL."""
-        # Initialize MitID authenticator and go directly to authorize step
-        from .mitid_auth import MitIDAuthenticator
+        # Initialize MitID authenticator and store PKCE values in _data
+        # (config flow is stateless, so we must persist these values)
+        from .mitid_auth import MitIDAuthenticator, generate_pkce_pair
+        import secrets
+        import uuid
 
-        self._mitid_authenticator = MitIDAuthenticator()
-        self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
+        # Generate PKCE values and store them
+        code_verifier, code_challenge = generate_pkce_pair()
+        device_id = str(uuid.uuid4()).upper()
+        state = secrets.token_urlsafe(32)
+        nonce = secrets.token_urlsafe(16)
+
+        self._data["_code_verifier"] = code_verifier
+        self._data["_code_challenge"] = code_challenge
+        self._data["_state"] = state
+        self._data["_nonce"] = nonce
+        self._data[CONF_DEVICE_ID] = device_id
 
         return await self.async_step_mitid_authorize()
 
@@ -202,14 +214,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle MitID authorization step."""
-        from .mitid_auth import MitIDAuthenticator
+        from .mitid_auth import MitIDAuthenticator, generate_pkce_pair
+        import secrets
+        import uuid
+        import urllib.parse
 
         errors: dict[str, str] = {}
 
-        # Ensure we have an authenticator (might be lost after HA restart)
-        if self._mitid_authenticator is None:
-            self._mitid_authenticator = MitIDAuthenticator()
-            self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
+        # Check if we have PKCE values stored (they might be lost after HA restart)
+        if "_code_verifier" not in self._data:
+            # Generate new PKCE values
+            code_verifier, code_challenge = generate_pkce_pair()
+            device_id = str(uuid.uuid4()).upper()
+            state = secrets.token_urlsafe(32)
+            nonce = secrets.token_urlsafe(16)
+
+            self._data["_code_verifier"] = code_verifier
+            self._data["_code_challenge"] = code_challenge
+            self._data["_state"] = state
+            self._data["_nonce"] = nonce
+            self._data[CONF_DEVICE_ID] = device_id
 
         if user_input is not None:
             authorization_code = user_input.get("authorization_code", "").strip()
@@ -217,7 +241,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Extract code from URL if user pasted the full redirect URL
             # URL format: eboksdk://ngdpoidc/callback?code=XXXXX&state=...
             if "code=" in authorization_code:
-                import urllib.parse
                 try:
                     # Handle both URL formats
                     if "://" in authorization_code:
@@ -233,10 +256,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.warning("Failed to parse URL, using as-is: %s", e)
 
             try:
+                # Create authenticator with stored PKCE values
+                auth = MitIDAuthenticator()
+                # Override with our stored values
+                auth._code_verifier = self._data["_code_verifier"]
+                auth._state = self._data["_state"]
+                auth._device_id = self._data[CONF_DEVICE_ID]
+
                 # Complete the MitID authentication
-                credentials = await self._mitid_authenticator.complete_authentication(
-                    authorization_code
-                )
+                credentials = await auth.complete_authentication(authorization_code)
 
                 # Store credentials
                 self._data[CONF_ACCESS_TOKEN] = credentials.access_token
@@ -244,6 +272,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data[CONF_USER_ID] = credentials.user_id
                 self._data[CONF_DEVICE_ID] = credentials.device_id
                 self._data[CONF_AUTH_TYPE] = AUTH_TYPE_MITID
+
+                # Clean up temporary PKCE data
+                for key in ["_code_verifier", "_code_challenge", "_state", "_nonce"]:
+                    self._data.pop(key, None)
 
                 # Validate that we can connect
                 info = await validate_mitid_input(self.hass, self._data)
@@ -257,13 +289,36 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception as err:
                 _LOGGER.exception("MitID authentication failed: %s", err)
                 errors["base"] = "mitid_auth_failed"
-                # Create NEW authenticator for fresh PKCE values
-                # (old code is consumed, need new auth URL)
-                self._mitid_authenticator = MitIDAuthenticator()
-                self._data[CONF_DEVICE_ID] = self._mitid_authenticator.device_id
+                # Generate NEW PKCE values for fresh auth URL
+                # (old code is consumed)
+                code_verifier, code_challenge = generate_pkce_pair()
+                device_id = str(uuid.uuid4()).upper()
+                state = secrets.token_urlsafe(32)
+                nonce = secrets.token_urlsafe(16)
 
-        # Get the authorization URL
-        auth_url = self._mitid_authenticator.get_authorization_url()
+                self._data["_code_verifier"] = code_verifier
+                self._data["_code_challenge"] = code_challenge
+                self._data["_state"] = state
+                self._data["_nonce"] = nonce
+                self._data[CONF_DEVICE_ID] = device_id
+
+        # Build the authorization URL with stored PKCE values
+        from .mitid_auth import DIGITALPOST_AUTH_URL, OAUTH_CLIENT_ID, OAUTH_REDIRECT_URI, OAUTH_SCOPE
+
+        params = {
+            "client_id": OAUTH_CLIENT_ID,
+            "redirect_uri": OAUTH_REDIRECT_URI,
+            "response_type": "code",
+            "scope": OAUTH_SCOPE,
+            "state": self._data["_state"],
+            "nonce": self._data["_nonce"],
+            "code_challenge": self._data["_code_challenge"],
+            "code_challenge_method": "S256",
+            "idp": "nemloginEboksRealm",
+            "deviceName": "HomeAssistant",
+            "deviceId": self._data[CONF_DEVICE_ID],
+        }
+        auth_url = f"{DIGITALPOST_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
         return self.async_show_form(
             step_id="mitid_authorize",
