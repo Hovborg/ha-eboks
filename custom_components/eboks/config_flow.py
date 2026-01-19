@@ -190,23 +190,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle MitID authentication - show authorization URL."""
-        # Initialize MitID authenticator and store PKCE values in context
-        # (self.context persists across flow steps, unlike self._data)
+        # Store PKCE values in hass.data using flow_id as key
+        # This is the only reliable way to persist data across HTTP requests
         from .mitid_auth import generate_pkce_pair
         import secrets
         import uuid
 
-        # Generate PKCE values and store them in context
+        # Generate PKCE values
         code_verifier, code_challenge = generate_pkce_pair()
         device_id = str(uuid.uuid4()).upper()
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(16)
 
-        self.context["_code_verifier"] = code_verifier
-        self.context["_code_challenge"] = code_challenge
-        self.context["_state"] = state
-        self.context["_nonce"] = nonce
-        self.context["_device_id"] = device_id
+        # Store in hass.data with flow_id as key
+        pkce_key = f"eboks_pkce_{self.flow_id}"
+        self.hass.data[pkce_key] = {
+            "code_verifier": code_verifier,
+            "code_challenge": code_challenge,
+            "state": state,
+            "nonce": nonce,
+            "device_id": device_id,
+        }
+        _LOGGER.info("Stored PKCE data with key: %s", pkce_key)
 
         return await self.async_step_mitid_authorize()
 
@@ -221,20 +226,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         import urllib.parse
 
         errors: dict[str, str] = {}
+        pkce_key = f"eboks_pkce_{self.flow_id}"
 
-        # Check if we have PKCE values stored in context
-        if "_code_verifier" not in self.context:
-            # Generate new PKCE values
+        # Check if we have PKCE values stored
+        if pkce_key not in self.hass.data:
+            _LOGGER.warning("PKCE data not found, generating new values")
             code_verifier, code_challenge = generate_pkce_pair()
             device_id = str(uuid.uuid4()).upper()
             state = secrets.token_urlsafe(32)
             nonce = secrets.token_urlsafe(16)
 
-            self.context["_code_verifier"] = code_verifier
-            self.context["_code_challenge"] = code_challenge
-            self.context["_state"] = state
-            self.context["_nonce"] = nonce
-            self.context["_device_id"] = device_id
+            self.hass.data[pkce_key] = {
+                "code_verifier": code_verifier,
+                "code_challenge": code_challenge,
+                "state": state,
+                "nonce": nonce,
+                "device_id": device_id,
+            }
+
+        pkce_data = self.hass.data[pkce_key]
 
         if user_input is not None:
             authorization_code = user_input.get("authorization_code", "").strip()
@@ -254,17 +264,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.warning("Failed to parse URL, using as-is: %s", e)
 
             try:
-                # Create authenticator with stored PKCE values from context
+                # Create authenticator with stored PKCE values
                 auth = MitIDAuthenticator()
-                auth._code_verifier = self.context["_code_verifier"]
-                auth._state = self.context["_state"]
-                auth._device_id = self.context["_device_id"]
+                auth._code_verifier = pkce_data["code_verifier"]
+                auth._state = pkce_data["state"]
+                auth._device_id = pkce_data["device_id"]
 
-                _LOGGER.info("Using code_verifier: %s...", self.context["_code_verifier"][:20])
-                _LOGGER.info("Using device_id: %s", self.context["_device_id"])
+                _LOGGER.info("Using code_verifier: %s...", pkce_data["code_verifier"][:20])
+                _LOGGER.info("Using device_id: %s", pkce_data["device_id"])
 
                 # Complete the MitID authentication
                 credentials = await auth.complete_authentication(authorization_code)
+
+                # Clean up PKCE data
+                self.hass.data.pop(pkce_key, None)
 
                 # Store credentials in _data for entry creation
                 self._data[CONF_ACCESS_TOKEN] = credentials.access_token
@@ -291,25 +304,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 state = secrets.token_urlsafe(32)
                 nonce = secrets.token_urlsafe(16)
 
-                self.context["_code_verifier"] = code_verifier
-                self.context["_code_challenge"] = code_challenge
-                self.context["_state"] = state
-                self.context["_nonce"] = nonce
-                self.context["_device_id"] = device_id
+                self.hass.data[pkce_key] = {
+                    "code_verifier": code_verifier,
+                    "code_challenge": code_challenge,
+                    "state": state,
+                    "nonce": nonce,
+                    "device_id": device_id,
+                }
+                pkce_data = self.hass.data[pkce_key]
 
-        # Build the authorization URL with stored PKCE values from context
+        # Build the authorization URL with stored PKCE values
         params = {
             "client_id": OAUTH_CLIENT_ID,
             "redirect_uri": OAUTH_REDIRECT_URI,
             "response_type": "code",
             "scope": OAUTH_SCOPE,
-            "state": self.context["_state"],
-            "nonce": self.context["_nonce"],
-            "code_challenge": self.context["_code_challenge"],
+            "state": pkce_data["state"],
+            "nonce": pkce_data["nonce"],
+            "code_challenge": pkce_data["code_challenge"],
             "code_challenge_method": "S256",
             "idp": "nemloginEboksRealm",
             "deviceName": "HomeAssistant",
-            "deviceId": self.context["_device_id"],
+            "deviceId": pkce_data["device_id"],
         }
         auth_url = f"{DIGITALPOST_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
