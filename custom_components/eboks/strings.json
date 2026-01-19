@@ -29,7 +29,7 @@
       },
       "mitid_authorize": {
         "title": "e-Boks - MitID Godkendelse",
-        "description": "**Trin 1:** Klik på linket og log ind med MitID:\n\n[Åbn MitID Login]({auth_url})\n\n**Trin 2:** Efter login forsøger browseren at åbne `eboksdk://...`\n\n**Trin 3:** Kopier koden fra URL'en (efter `code=` og før `&`)\n\n**Trin 4:** Indsæt koden nedenfor",
+        "description": "1. Åbn dette link i din browser:\n\n{auth_url}\n\n2. Log ind med MitID\n\n3. Når browseren viser 'kan ikke åbne eboksdk://...' - kopier koden fra URL'en (efter code= og før &)\n\n4. Indsæt koden nedenfor",
         "data": {
           "authorization_code": "Autoriserings kode"
         },
