@@ -2,18 +2,54 @@
   "config": {
     "step": {
       "user": {
-        "title": "e-Boks Login",
-        "description": "Indtast dine e-Boks oplysninger. Find din aktiveringskode i e-Boks appen under Menu → Mobiladgang.",
+        "title": "e-Boks - Vælg login metode",
+        "description": "Vælg hvordan du vil logge ind på e-Boks.",
+        "menu_options": {
+          "activation_code": "Aktiveringskode (kun Virksomheder)",
+          "mitid_credentials": "MitID (fuld adgang inkl. Digital Post)"
+        }
+      },
+      "activation_code": {
+        "title": "e-Boks - Aktiveringskode",
+        "description": "Indtast dine e-Boks oplysninger. Find din aktiveringskode i e-Boks appen under Menu → Mobiladgang.\n\n**Bemærk:** Denne metode giver kun adgang til Virksomheder-postkassen.",
         "data": {
           "cpr": "CPR-nummer",
           "password": "Mobil PIN-kode",
           "activation_code": "Aktiveringskode"
+        },
+        "data_description": {
+          "cpr": "Dit CPR-nummer uden bindestreg",
+          "password": "Din 4-cifrede mobil PIN-kode",
+          "activation_code": "6-cifret aktiveringskode fra e-Boks appen"
+        }
+      },
+      "mitid_credentials": {
+        "title": "e-Boks - MitID Login",
+        "description": "Du vil nu blive sendt til MitID for at logge ind."
+      },
+      "mitid_authorize": {
+        "title": "e-Boks - MitID Godkendelse",
+        "description": "1. Åbn dette link i din browser:\n\n{auth_url}\n\n2. Log ind med MitID\n\n3. Når browseren viser 'kan ikke åbne eboksdk://...' - kopier koden fra URL'en (efter code= og før &)\n\n4. Indsæt koden nedenfor",
+        "data": {
+          "authorization_code": "Autoriserings kode"
+        },
+        "data_description": {
+          "authorization_code": "Koden fra callback URL'en (efter 'code=' og før '&')"
         }
       },
       "reauth_confirm": {
-        "title": "Log ind på e-Boks igen",
-        "description": "Din e-Boks session er udløbet. Indtast venligst dine oplysninger igen.",
+        "title": "e-Boks - Genautentificer",
+        "description": "Din e-Boks session er udløbet. Indtast dine oplysninger igen.",
         "data": {
+          "password": "Mobil PIN-kode",
+          "activation_code": "Aktiveringskode"
+        }
+      },
+      "reconfigure": {
+        "title": "e-Boks - Genkonfigurer",
+        "description": "Opdater dine e-Boks oplysninger.",
+        "data": {
+          "cpr": "CPR-nummer",
           "password": "Mobil PIN-kode",
           "activation_code": "Aktiveringskode"
         }
@@ -22,11 +58,31 @@
     "error": {
       "cannot_connect": "Kunne ikke forbinde til e-Boks",
       "invalid_auth": "Ugyldige oplysninger",
-      "unknown": "Ukendt fejl opstod"
+      "unknown": "Ukendt fejl opstod",
+      "mitid_auth_failed": "MitID autentificering fejlede. Prøv igen."
     },
     "abort": {
       "already_configured": "Denne e-Boks konto er allerede konfigureret",
-      "reauth_successful": "Genautentificering lykkedes"
+      "reauth_successful": "Genautentificering lykkedes",
+      "reconfigure_successful": "Genkonfigurering lykkedes"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "e-Boks Indstillinger",
+        "description": "Konfigurer e-Boks integration.\n\nLogin type: **{auth_type}**\n\nScan interval: {min_scan}-{max_scan} minutter\nAntal beskeder: {min_msg}-{max_msg} beskeder",
+        "data": {
+          "scan_interval": "Scan interval (minutter)",
+          "message_count": "Antal besked-sensorer",
+          "notify_senders": "Vigtige afsendere (kommasepareret)"
+        },
+        "data_description": {
+          "scan_interval": "Hvor ofte der tjekkes for nye beskeder",
+          "message_count": "Antal individuelle besked-sensorer (Besked 1, Besked 2, osv.)",
+          "notify_senders": "Kommasepareret liste over afsendere der giver notifikationer"
+        }
+      }
     }
   }
 }

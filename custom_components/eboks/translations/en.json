@@ -2,18 +2,54 @@
   "config": {
     "step": {
       "user": {
-        "title": "e-Boks Login",
-        "description": "Enter your e-Boks credentials. Find your activation code in the e-Boks app under Menu → Mobile Access.",
+        "title": "e-Boks - Choose login method",
+        "description": "Choose how you want to log in to e-Boks.",
+        "menu_options": {
+          "activation_code": "Activation Code (Business only)",
+          "mitid_credentials": "MitID (full access incl. Digital Post)"
+        }
+      },
+      "activation_code": {
+        "title": "e-Boks - Activation Code",
+        "description": "Enter your e-Boks credentials. Find your activation code in the e-Boks app under Menu → Mobile Access.\n\n**Note:** This method only gives access to the Business mailbox.",
         "data": {
           "cpr": "CPR Number",
           "password": "Mobile PIN Code",
           "activation_code": "Activation Code"
+        },
+        "data_description": {
+          "cpr": "Your CPR number without hyphen",
+          "password": "Your 4-digit mobile PIN code",
+          "activation_code": "6-digit activation code from the e-Boks app"
+        }
+      },
+      "mitid_credentials": {
+        "title": "e-Boks - MitID Login",
+        "description": "You will now be redirected to MitID to log in."
+      },
+      "mitid_authorize": {
+        "title": "e-Boks - MitID Authorization",
+        "description": "1. Open this link in your browser:\n\n{auth_url}\n\n2. Log in with MitID\n\n3. When browser shows 'cannot open eboksdk://...' - copy the code from URL (after code= and before &)\n\n4. Enter the code below",
+        "data": {
+          "authorization_code": "Authorization code"
+        },
+        "data_description": {
+          "authorization_code": "The code from the callback URL (after 'code=' and before '&')"
         }
       },
       "reauth_confirm": {
-        "title": "Re-authenticate e-Boks",
+        "title": "e-Boks - Re-authenticate",
         "description": "Your e-Boks session has expired. Please enter your credentials again.",
         "data": {
+          "password": "Mobile PIN Code",
+          "activation_code": "Activation Code"
+        }
+      },
+      "reconfigure": {
+        "title": "e-Boks - Reconfigure",
+        "description": "Update your e-Boks credentials.",
+        "data": {
+          "cpr": "CPR Number",
           "password": "Mobile PIN Code",
           "activation_code": "Activation Code"
         }
@@ -22,11 +58,31 @@
     "error": {
       "cannot_connect": "Failed to connect to e-Boks",
       "invalid_auth": "Invalid credentials",
-      "unknown": "Unknown error occurred"
+      "unknown": "Unknown error occurred",
+      "mitid_auth_failed": "MitID authentication failed. Please try again."
     },
     "abort": {
       "already_configured": "This e-Boks account is already configured",
-      "reauth_successful": "Re-authentication successful"
+      "reauth_successful": "Re-authentication successful",
+      "reconfigure_successful": "Reconfiguration successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "e-Boks Settings",
+        "description": "Configure e-Boks integration.\n\nLogin type: **{auth_type}**\n\nScan interval: {min_scan}-{max_scan} minutes\nMessage count: {min_msg}-{max_msg} messages",
+        "data": {
+          "scan_interval": "Scan interval (minutes)",
+          "message_count": "Number of message sensors",
+          "notify_senders": "Important senders (comma-separated)"
+        },
+        "data_description": {
+          "scan_interval": "How often to check for new messages",
+          "message_count": "Number of individual message sensors (Message 1, Message 2, etc.)",
+          "notify_senders": "Comma-separated list of senders that trigger notifications"
+        }
+      }
     }
   }
 }
